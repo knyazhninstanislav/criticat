@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  # Основное приложение
+  app:
+    build: .
+    container_name: criticat-server
+    restart: unless-stopped
+    ports:
+      - "26000:26000"
+    environment:
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - DATABASE_URL=sqlite:///data/criticat.db
+      - JWT_SECRET=${JWT_SECRET}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - TZ=Asia/Novosibirsk
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      - redis
+    
+  # Redis для очередей и кэша
+  redis:
+    image: redis:7-alpine
+    container_name: criticat-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+  
+  # Worker для обработки очередей
+  worker:
+    build: .
+    container_name: criticat-worker
+    restart: unless-stopped
+    command: python -m app.workers
+    environment:
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - DATABASE_URL=sqlite:///data/criticat.db
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      - redis
+      - app
+  
+  # Telegram Bot Poller
+  telegram_poller:
+    build: .
+    container_name: criticat-telegram-poller
+    restart: unless-stopped
+    command: python -m app.telegram_poller
+    environment:
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - DATABASE_URL=sqlite:///data/criticat.db
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      - redis
+      - app
+  
+ volumes:
+  redis_data:
