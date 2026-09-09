@@ -1,7 +1,54 @@
 version: '3.8'
 
 services:
-  # Основное приложение
+  rabbitmq:
+    image: rabbitmq:3.12-alpine  # Минимальная версия без Management UI
+    container_name: criticat-rabbitmq
+    restart: unless-stopped
+    hostname: rabbitmq
+    ports:
+      - "5672:5672"  # Только AMQP порт (без Management UI)
+    environment:
+      # Минимальные настройки Erlang      
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-guest}
+      - RABBITMQ_DEFAULT_VHOST=${RABBITMQ_VHOST:-/}
+      # Отключаем ненужные плагины
+      - RABBITMQ_PLUGINS=rabbitmq_management_agent  # Только самое необходимое
+      # Отключаем лишние функции
+      - RABBITMQ_ERLANG_COOKIE=secret_cookie
+    # Минимальные ресурсы
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    # Увеличение лимитов для стабильности
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - ./rabbitmq/data:/var/lib/rabbitmq:rw
+      - ./rabbitmq/logs:/var/log/rabbitmq:rw
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 60s  # Реже проверяем
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - criticat-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  # Основное приложение (API)
   app:
     build: .
     container_name: criticat-server
@@ -9,62 +56,116 @@ services:
     ports:
       - "26000:26000"
     environment:
-      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
-      - DATABASE_URL=sqlite:///data/criticat.db
-      - JWT_SECRET=${JWT_SECRET}
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:-}
+      - DATABASE_URL=sqlite:////app/data/criticat.db
+      - API_KEY=${API_KEY:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - TZ=Asia/Novosibirsk
+      # RabbitMQ
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - RABBITMQ_VHOST=${RABBITMQ_VHOST:-/}
+      # Настройки очередей
+      - MESSAGE_TTL=${MESSAGE_TTL:-60000}
+      - RETRY_DELAY=${RETRY_DELAY:-300000}
+      - MAX_RETRIES=${MAX_RETRIES:-3}
+      - PENDING_TIMEOUT_HOURS=${PENDING_TIMEOUT_HOURS:-24}
     volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
+      - ./app:/app/app:rw
+      - ./data:/app/data:rw
+      - ./logs:/app/logs:rw
+    user: "0:0"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 26000 --reload
     depends_on:
-      - redis
-    
-  # Redis для очередей и кэша
-  redis:
-    image: redis:7-alpine
-    container_name: criticat-redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
-  
-  # Worker для обработки очередей
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:26000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - criticat-network
+
+  # Worker для обработки результатов
   worker:
     build: .
     container_name: criticat-worker
     restart: unless-stopped
-    command: python -m app.workers
+    command: sh -c "sleep 10 && python -m app.workers"
     environment:
-      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
-      - DATABASE_URL=sqlite:///data/criticat.db
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:-}
+      - DATABASE_URL=sqlite:////app/data/criticat.db
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # RabbitMQ
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - RABBITMQ_VHOST=${RABBITMQ_VHOST:-/}
+      # Настройки очередей
+      - MESSAGE_TTL=${MESSAGE_TTL:-60000}
+      - RETRY_DELAY=${RETRY_DELAY:-300000}
+      - MAX_RETRIES=${MAX_RETRIES:-3}
+      - PENDING_TIMEOUT_HOURS=${PENDING_TIMEOUT_HOURS:-24}
     volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
+      - ./app:/app/app:rw
+      - ./data:/app/data:rw
+      - ./logs:/app/logs:rw
+    user: "0:0"
     depends_on:
-      - redis
-      - app
-  
-  # Telegram Bot Poller
+      rabbitmq:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 50s
+    networks:
+      - criticat-network
+
+  # Telegram Poller
   telegram_poller:
     build: .
     container_name: criticat-telegram-poller
     restart: unless-stopped
-    command: python -m app.telegram_poller
+    command: sh -c "sleep 15 && python -m app.telegram_poller"
     environment:
-      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
-      - DATABASE_URL=sqlite:///data/criticat.db
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:-}
+      - DATABASE_URL=sqlite:////app/data/criticat.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # RabbitMQ
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - RABBITMQ_VHOST=${RABBITMQ_VHOST:-/}
     volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
+      - ./app:/app/app:rw
+      - ./data:/app/data:rw
+      - ./logs:/app/logs:rw
+    user: "0:0"
     depends_on:
-      - redis
-      - app
-  
- volumes:
-  redis_data:
+      rabbitmq:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - criticat-network
+
+networks:
+  criticat-network:
+    driver: bridge

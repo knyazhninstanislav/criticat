@@ -1,5 +1,4 @@
-# database.py
-from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text, Index
+from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
@@ -15,9 +14,9 @@ Base = declarative_base()
 
 
 class AnonymizedResult(Base):
-    """Обезличенный результат"""
+    """Обезличенный результат (только IDS, отделение, тест, значение)"""
     __tablename__ = "anonymized_results"
-
+    
     id = Column(Integer, primary_key=True, index=True)
     result_key = Column(String, unique=True, index=True)
     ids = Column(Integer, index=True)
@@ -28,27 +27,20 @@ class AnonymizedResult(Base):
     ref_upper = Column(Float, nullable=True)
     deviation_percent = Column(Float, nullable=True)
     monitor_type = Column(String, default='both')
-    status = Column(String, default='pending')  # pending, sent, confirmed, rejected, expired
-    acknowledged = Column(Boolean, default=False)  # Десктоп подтвердил получение
+    status = Column(String, default='pending')  # pending, sent, confirmed
+    acknowledged = Column(Boolean, default=False)  # Десктоп забрал результат
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     telegram_message_id = Column(String, nullable=True)
     telegram_chat_id = Column(String, nullable=True)
     confirmed_at = Column(DateTime, nullable=True)
     confirmed_by = Column(String, nullable=True)
-    rejection_reason = Column(String, nullable=True)
-    attempts_count = Column(Integer, default=0)
-
-    __table_args__ = (
-        Index('idx_status_acknowledged', 'status', 'acknowledged'),
-        Index('idx_created_at', 'created_at'),
-    )
 
 
 class TelegramUser(Base):
     """Пользователь Telegram"""
     __tablename__ = "telegram_users"
-
+    
     id = Column(Integer, primary_key=True, index=True)
     chat_id = Column(String, unique=True, index=True)
     username = Column(String, nullable=True)
@@ -56,25 +48,20 @@ class TelegramUser(Base):
     department = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    last_notification_at = Column(DateTime, nullable=True)
 
 
 class NotificationLog(Base):
     """Лог уведомлений"""
     __tablename__ = "notification_logs"
-
+    
     id = Column(Integer, primary_key=True, index=True)
     result_id = Column(Integer, nullable=True)
     result_key = Column(String, nullable=True, index=True)
     chat_id = Column(String, nullable=True)
     message_id = Column(String, nullable=True)
-    action = Column(String)  # sent, confirmed, rejected, expired, failed
+    action = Column(String)
     details = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-
-    __table_args__ = (
-        Index('idx_result_key_action', 'result_key', 'action'),
-    )
 
 
 def get_db_path() -> str:
@@ -107,31 +94,32 @@ def ensure_db_writable():
 
 
 def migrate_database():
-    """Миграция БД"""
+    """Миграция БД - добавление недостающих колонок"""
     db_path = get_db_path()
     if not db_path or not os.path.exists(db_path):
         return
-
+    
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-
+        
         # Проверяем колонки anonymized_results
         cursor.execute("PRAGMA table_info(anonymized_results)")
         columns = [col[1] for col in cursor.fetchall()]
-
-        # Добавляем недостающие колонки
-        if 'rejection_reason' not in columns:
-            cursor.execute("ALTER TABLE anonymized_results ADD COLUMN rejection_reason TEXT")
-            logger.info("Добавлена колонка rejection_reason")
-
-        if 'attempts_count' not in columns:
-            cursor.execute("ALTER TABLE anonymized_results ADD COLUMN attempts_count INTEGER DEFAULT 0")
-            logger.info("Добавлена колонка attempts_count")
-
+        
+        # Добавляем acknowledged если нет
+        if 'acknowledged' not in columns:
+            cursor.execute("ALTER TABLE anonymized_results ADD COLUMN acknowledged BOOLEAN DEFAULT 0")
+            logger.info("Добавлена колонка acknowledged")
+        
+        # Добавляем updated_at если нет
+        if 'updated_at' not in columns:
+            cursor.execute("ALTER TABLE anonymized_results ADD COLUMN updated_at TIMESTAMP")
+            logger.info("Добавлена колонка updated_at")
+        
         conn.commit()
         conn.close()
-
+        
     except Exception as e:
         logger.error(f"Ошибка миграции: {e}")
 
@@ -163,14 +151,21 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def init_db():
     """Инициализация базы данных"""
     logger.info("Инициализация базы данных...")
-
+    
+    # Создание директории
     ensure_db_directory()
+    
+    # Создание таблиц
     Base.metadata.create_all(bind=engine)
     logger.info("Таблицы созданы")
-
+    
+    # Миграция
     migrate_database()
+    
+    # Права
     ensure_db_writable()
-
+    
+    # Проверка таблиц
     from sqlalchemy import inspect
     inspector = inspect(engine)
     tables = inspector.get_table_names()
@@ -187,7 +182,7 @@ def get_db():
 
 
 def get_db_session():
-    """Получение сессии БД"""
+    """Получение сессии БД (для прямого использования)"""
     return SessionLocal()
 
 
@@ -195,11 +190,38 @@ def close_db_session(db):
     """Закрытие сессии"""
     if db:
         db.close()
-        
-        
-# app/database.py - добавьте в конец файла
 
-# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+
+# Вспомогательные функции для работы с результатами
+
+def get_pending_results(db) -> list:
+    """Получение ожидающих результатов"""
+    return db.query(AnonymizedResult).filter(
+        AnonymizedResult.status == 'pending'
+    ).all()
+
+
+def get_sent_results(db) -> list:
+    """Получение отправленных результатов"""
+    return db.query(AnonymizedResult).filter(
+        AnonymizedResult.status == 'sent'
+    ).all()
+
+
+def get_confirmed_results(db) -> list:
+    """Получение подтвержденных результатов (не удаленных)"""
+    return db.query(AnonymizedResult).filter(
+        AnonymizedResult.status == 'confirmed',
+        AnonymizedResult.acknowledged == False
+    ).all()
+
+
+def get_all_results(db) -> list:
+    """Получение всех результатов"""
+    return db.query(AnonymizedResult).order_by(
+        AnonymizedResult.created_at.desc()
+    ).all()
+
 
 def get_result_by_key(db, result_key: str):
     """Получение результата по ключу"""
@@ -239,20 +261,6 @@ def mark_as_confirmed(db, result_key: str, chat_id: str):
     return False
 
 
-def mark_as_rejected(db, result_key: str, chat_id: str, reason: str = None):
-    """Пометка результата как отклоненного"""
-    result = get_result_by_key(db, result_key)
-    if result:
-        result.status = 'rejected'
-        result.confirmed_at = datetime.utcnow()
-        result.confirmed_by = chat_id
-        result.rejection_reason = reason
-        result.updated_at = datetime.utcnow()
-        db.commit()
-        return True
-    return False
-
-
 def mark_as_acknowledged(db, result_key: str):
     """Пометка результата как полученного десктопом"""
     result = get_result_by_key(db, result_key)
@@ -286,33 +294,29 @@ def delete_result(db, result_key: str) -> bool:
         return False
 
 
-def get_pending_results(db) -> list:
-    """Получение ожидающих результатов"""
-    return db.query(AnonymizedResult).filter(
-        AnonymizedResult.status == 'pending'
+def delete_results_batch(db, result_keys: list) -> int:
+    """Пакетное удаление результатов"""
+    deleted = 0
+    for key in result_keys:
+        if delete_result(db, key):
+            deleted += 1
+    return deleted
+
+
+def cleanup_old_results(db, days: int = 7) -> int:
+    """Очистка результатов старше N дней"""
+    cutoff = datetime.utcnow() - datetime.timedelta(days=days)
+    
+    old_results = db.query(AnonymizedResult).filter(
+        AnonymizedResult.created_at < cutoff
     ).all()
-
-
-def get_sent_results(db) -> list:
-    """Получение отправленных результатов"""
-    return db.query(AnonymizedResult).filter(
-        AnonymizedResult.status == 'sent'
-    ).all()
-
-
-def get_confirmed_results(db) -> list:
-    """Получение подтвержденных результатов (не удаленных)"""
-    return db.query(AnonymizedResult).filter(
-        AnonymizedResult.status == 'confirmed',
-        AnonymizedResult.acknowledged == False
-    ).all()
-
-
-def get_all_results(db) -> list:
-    """Получение всех результатов"""
-    return db.query(AnonymizedResult).order_by(
-        AnonymizedResult.created_at.desc()
-    ).all()
+    
+    deleted = 0
+    for result in old_results:
+        if delete_result(db, result.result_key):
+            deleted += 1
+    
+    return deleted
 
 
 def get_active_users(db) -> list:
@@ -370,8 +374,6 @@ def get_statistics(db) -> dict:
     pending = db.query(AnonymizedResult).filter(AnonymizedResult.status == 'pending').count()
     sent = db.query(AnonymizedResult).filter(AnonymizedResult.status == 'sent').count()
     confirmed = db.query(AnonymizedResult).filter(AnonymizedResult.status == 'confirmed').count()
-    rejected = db.query(AnonymizedResult).filter(AnonymizedResult.status == 'rejected').count()
-    expired = db.query(AnonymizedResult).filter(AnonymizedResult.status == 'expired').count()
     acknowledged = db.query(AnonymizedResult).filter(AnonymizedResult.acknowledged == True).count()
     
     return {
@@ -379,24 +381,5 @@ def get_statistics(db) -> dict:
         'pending': pending,
         'sent': sent,
         'confirmed': confirmed,
-        'rejected': rejected,
-        'expired': expired,
         'acknowledged': acknowledged,
     }
-
-
-def cleanup_old_results(db, days: int = 7) -> int:
-    """Очистка результатов старше N дней"""
-    cutoff = datetime.utcnow() - timedelta(days=days)
-    
-    old_results = db.query(AnonymizedResult).filter(
-        AnonymizedResult.created_at < cutoff,
-        AnonymizedResult.status.in_(['confirmed', 'rejected', 'expired'])
-    ).all()
-    
-    deleted = 0
-    for result in old_results:
-        if delete_result(db, result.result_key):
-            deleted += 1
-    
-    return deleted
