@@ -1,12 +1,14 @@
 # app/main.py
 from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 import logging
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 from .config import settings
-from .database import init_db, engine
+from .database import init_db, engine, SessionLocal
 from .api import router
 from .rabbitmq_client import rabbitmq_client
 
@@ -88,11 +90,26 @@ app.add_middleware(
 app.include_router(router, prefix="/api/v1")
 
 
+def _check_database() -> bool:
+    """Проверка доступности БД"""
+    db = None
+    try:
+        db = SessionLocal()
+        db.execute(text("SELECT 1"))
+        return True
+    except Exception as e:
+        logger.error(f"DB health check failed: {e}")
+        return False
+    finally:
+        if db:
+            db.close()
+
+
 @app.get("/")
 async def root():
     """Корневой эндпоинт — показывает реальное состояние"""
     rabbitmq_ok = rabbitmq_client.is_connected()
-    db_ok = engine is not None
+    db_ok = _check_database()
 
     return {
         "name": "CritiCat Server",
@@ -109,18 +126,7 @@ async def health_check(response: Response):
     Healthcheck — возвращает 503 если RabbitMQ или БД недоступны.
     Это заставляет Docker/K8s перезапускать контейнер.
     """
-    import datetime
-
-    db_ok = False
-    try:
-        from .database import SessionLocal
-        db = SessionLocal()
-        db.execute("SELECT 1")
-        db.close()
-        db_ok = True
-    except Exception as e:
-        logger.error(f"DB health check failed: {e}")
-
+    db_ok = _check_database()
     rabbitmq_ok = rabbitmq_client.is_connected()
 
     healthy = db_ok and rabbitmq_ok
@@ -130,7 +136,7 @@ async def health_check(response: Response):
 
     return {
         "status": "ok" if healthy else "unhealthy",
-        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "timestamp": datetime.utcnow().isoformat(),
         "checks": {
             "database": "ok" if db_ok else "fail",
             "rabbitmq": "ok" if rabbitmq_ok else "fail",
@@ -148,9 +154,18 @@ async def liveness():
 async def readiness(response: Response):
     """Readiness — приложение готово принимать трафик"""
     rabbitmq_ok = rabbitmq_client.is_connected()
+    db_ok = _check_database()
 
-    if not rabbitmq_ok:
+    if not (rabbitmq_ok and db_ok):
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-        return {"status": "not_ready", "rabbitmq": "disconnected"}
+        return {
+            "status": "not_ready",
+            "rabbitmq": "connected" if rabbitmq_ok else "disconnected",
+            "database": "connected" if db_ok else "disconnected",
+        }
 
-    return {"status": "ready", "rabbitmq": "connected"}
+    return {
+        "status": "ready",
+        "rabbitmq": "connected",
+        "database": "connected",
+    }
