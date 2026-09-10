@@ -70,7 +70,6 @@ class MessageHandlers:
             ids = body.get('ids')
             department = body.get('department')
 
-            # Получаем активных пользователей
             service = ResultService()
             users = service.get_active_users()
 
@@ -83,40 +82,46 @@ class MessageHandlers:
                     settings.exchange_dlx
                 )
                 service.close()
-                return
+                return  # ← НЕ бросаем исключение, сообщение будет ack'нуто
 
-            # Отправляем уведомления всем пользователям
             sent_count = 0
             for user in users:
                 try:
-                    # Отправляем сообщение
                     message_id = await self.telegram_bot.send_notification(
                         chat_id=user.chat_id,
                         ids=ids,
                         department=department,
-                        results=[body]  # Передаем как список для совместимости
+                        results=[body]
                     )
 
                     if message_id:
                         sent_count += 1
-                        # Отмечаем результат как отправленный
                         service.mark_as_sent(result_id, user.chat_id, message_id)
                         logger.info(f"Telegram sent to {user.chat_id}: {result_key}")
                     else:
-                        logger.error(f"Failed to send to {user.chat_id}")
+                        # КЛЮЧЕВОЕ: логируем причину и деактивируем невалидных
+                        error = self.telegram_bot.last_error or "Unknown error"
+                        logger.error(f"Failed to send to {user.chat_id}: {error}")
+
+                        # Если чат не найден — деактивируем пользователя
+                        if error and ("Chat not found" in error or "chat not found" in error.lower()):
+                            logger.warning(f"Deactivating user {user.chat_id} (chat not found)")
+                            user.is_active = False
+                            service.db.commit()
+                        # Если Telegram недоступен — не считаем это ошибкой пользователя
+                        elif error and ("Timeout" in error or "timed out" in error.lower()):
+                            logger.warning(f"Telegram timeout for {user.chat_id}, will retry later")
+                            # Не деактивируем, сообщение уйдет в retry
 
                 except Exception as e:
                     logger.error(f"Error sending to {user.chat_id}: {e}")
 
             service.close()
 
+            # Если никому не отправили — пробрасываем исключение для retry
             if sent_count == 0:
-                # Если никому не отправили - в failed
-                await rabbitmq_client.publish(
-                    'failed.telegram',
-                    body,
-                    settings.exchange_dlx
-                )
+                logger.error(f"No messages sent for {result_key}, will retry via DLX")
+                raise Exception("No messages sent")
 
         except Exception as e:
             logger.error(f"Error handling alert telegram: {e}")

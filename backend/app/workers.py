@@ -1,4 +1,4 @@
-# workers.py
+# app/workers.py
 import asyncio
 import logging
 import threading
@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
 from .config import settings
-from .database import init_db
+from .database import init_db, AnonymizedResult
 from .rabbitmq_client import rabbitmq_client
 from .telegram_bot import TelegramBot
 from .message_handlers import MessageHandlers
@@ -132,7 +132,7 @@ class ResultWorker:
                 service.close()
 
             except Exception as e:
-                logger.error(f"Error processing pending timeouts: {e}")
+                logger.error(f"Error processing pending timeouts: {e}", exc_info=True)
 
             await asyncio.sleep(60)  # Проверяем каждую минуту
 
@@ -158,7 +158,7 @@ class ResultWorker:
                         'result_key': result.result_key,
                         'action': 'approved',
                         'confirmed_by': result.confirmed_by,
-                        'confirmed_at': result.confirmed_at.isoformat()
+                        'confirmed_at': result.confirmed_at.isoformat() if result.confirmed_at else None
                     }
                     await rabbitmq_client.publish('desktop.confirmation', confirmation_data)
                     logger.info(f"Resent confirmation for {result.result_key}")
@@ -166,7 +166,7 @@ class ResultWorker:
                 service.close()
 
             except Exception as e:
-                logger.error(f"Error processing expired confirmations: {e}")
+                logger.error(f"Error processing expired confirmations: {e}", exc_info=True)
 
             await asyncio.sleep(300)  # Проверяем каждые 5 минут
 
