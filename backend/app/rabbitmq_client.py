@@ -237,41 +237,46 @@ class RabbitMQClient:
             callback: Callable[[Dict[str, Any], Any], Awaitable[None]]
     ):
         """
-        Подписка на очередь с автоматическим восстановлением.
+        Подписка на очередь.
+
+        ВАЖНО: callback НЕ должен вызывать message.ack() или message.nack() —
+        это делается автоматически через message.process().
         """
         if not self._is_connected or not self.channel:
             logger.error(f"Cannot consume {queue_name}: not connected")
             return
 
-        # Запоминаем для восстановления
         self._consumers_to_restore[queue_name] = callback
 
-        try:
-            queue = await self.channel.get_queue(queue_name)
+        while self._is_connected:
+            try:
+                queue = await self.channel.get_queue(queue_name)
 
-            async with queue.iterator() as queue_iter:
-                async for message in queue_iter:
-                    async with message.process(requeue=False):
+                async with queue.iterator() as queue_iter:
+                    async for message in queue_iter:
                         try:
-                            body = json.loads(message.body.decode())
-                            logger.debug(f"Received from {queue_name}")
-                            await callback(body, message)
+                            # process() САМ делает ack при успехе / nack при исключении
+                            async with message.process(requeue=False, reject_on_redelivered=False):
+                                body = json.loads(message.body.decode())
+                                logger.debug(f"Received from {queue_name}")
+                                await callback(body, message)
                         except json.JSONDecodeError as e:
                             logger.error(f"Invalid JSON in {queue_name}: {e}")
-                            raise
+                            # process() сделает nack автоматически
                         except Exception as e:
                             logger.error(f"Error processing from {queue_name}: {e}")
-                            raise
+                            # process() сделает nack автоматически
+                        # НЕ пытаемся делать ack/nack повторно!
 
-        except asyncio.CancelledError:
-            logger.info(f"Consumer for {queue_name} cancelled")
-            raise
-        except Exception as e:
-            logger.error(f"Error consuming from {queue_name}: {e}")
-            # Попробуем перезапустить через 5 секунд
-            await asyncio.sleep(5)
-            if self._is_connected:
-                asyncio.create_task(self.consume(queue_name, callback))
+            except asyncio.CancelledError:
+                logger.info(f"Consumer for {queue_name} cancelled")
+                raise
+            except Exception as e:
+                logger.error(f"Consumer for {queue_name} crashed: {e}")
+                if self._is_connected:
+                    await asyncio.sleep(5)
+                else:
+                    break
 
     async def health_check(self) -> bool:
         """Проверка реального состояния соединения"""
