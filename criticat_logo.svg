@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="512" height="512">
+  <defs>
+    <!-- Градиент для головы кота -->
+    <linearGradient id="headGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#2a2e3e"/>
+      <stop offset="100%" stop-color="#1a1e2e"/>
+    </linearGradient>
+
+    <!-- Свечение для ЭКГ -->
+    <filter id="ecgGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Свечение для красных элементов -->
+    <filter id="redGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Голова кота (скруглённый прямоугольник) -->
+  <rect x="25" y="25" width="150" height="140" rx="30" ry="30"
+        fill="url(#headGrad)" stroke="#ff2d55" stroke-width="3"/>
+
+  <!-- Левое ухо -->
+  <polygon points="30,40 70,10 90,55"
+           fill="url(#headGrad)" stroke="#ff2d55" stroke-width="3" stroke-linejoin="round"/>
+
+  <!-- Правое ухо -->
+  <polygon points="170,40 130,10 110,55"
+           fill="url(#headGrad)" stroke="#ff2d55" stroke-width="3" stroke-linejoin="round"/>
+
+  <!-- Внутренняя часть ушей (розовая) -->
+  <polygon points="42,42 65,25 78,52" fill="#ff2d55" opacity="0.25"/>
+  <polygon points="158,42 135,25 122,52" fill="#ff2d55" opacity="0.25"/>
+
+  <!-- Левый глаз -->
+  <ellipse cx="65" cy="80" rx="14" ry="14"
+           fill="none" stroke="#ff2d55" stroke-width="3"/>
+
+  <!-- Зрачок левого глаза (смотрит вправо-вверх, следя за трендом) -->
+  <circle cx="69" cy="76" r="4.5" fill="#ff2d55" filter="url(#redGlow)"/>
+
+  <!-- Правый глаз -->
+  <ellipse cx="135" cy="80" rx="14" ry="14"
+           fill="none" stroke="#ff2d55" stroke-width="3"/>
+
+  <!-- Зрачок правого глаза (смотрит вправо-вверх) -->
+  <circle cx="139" cy="76" r="4.5" fill="#ff2d55" filter="url(#redGlow)"/>
+
+  <!-- Нос (треугольник) -->
+  <polygon points="100,95 94,108 106,108" fill="#ff2d55" filter="url(#redGlow)"/>
+
+  <!-- Усы (левые) -->
+  <line x1="30" y1="105" x2="75" y2="110"
+        stroke="#ffffff" stroke-opacity="0.25" stroke-width="2" stroke-linecap="round"/>
+  <line x1="30" y1="120" x2="78" y2="118"
+        stroke="#ffffff" stroke-opacity="0.25" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Усы (правые) -->
+  <line x1="170" y1="105" x2="125" y2="110"
+        stroke="#ffffff" stroke-opacity="0.25" stroke-width="2" stroke-linecap="round"/>
+  <line x1="170" y1="120" x2="122" y2="118"
+        stroke="#ffffff" stroke-opacity="0.25" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- ЭКГ-линия (зелёная, следит за трендом) -->
+  <polyline points="25,60 50,60 58,40 66,80 74,30 82,70 90,55 98,90 106,45 114,85 122,50 130,70 138,45 146,75 154,55 175,60"
+            fill="none" stroke="#00ff94" stroke-width="3"
+            stroke-linecap="round" stroke-linejoin="round"
+            filter="url(#ecgGlow)"/>
+
+  <!-- Пиковая точка (критическое значение) — пульсирующая красная -->
+  <circle cx="74" cy="30" r="3" fill="#ff2d55" filter="url(#redGlow)">
+    <animate attributeName="r" values="3;5;3" dur="1.5s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="1;0.6;1" dur="1.5s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- Уголки сканирования (по 4 углам) -->
+  <g stroke="#ff6b8a" stroke-width="2" fill="none" opacity="0.5">
+    <!-- Верхний левый: ⌐ -->
+    <path d="M 10 22 L 10 10 L 22 10"/>
+    <!-- Верхний правый: ¬ (зеркально левому) -->
+    <path d="M 190 22 L 190 10 L 178 10"/>
+    <!-- Нижний левый: L -->
+    <path d="M 10 178 L 10 190 L 22 190"/>
+    <!-- Нижний правый: ⌐ перевёрнутый -->
+    <path d="M 190 178 L 190 190 L 178 190"/>
+  </g>
+</svg>
