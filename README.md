@@ -1,6 +1,6 @@
 # CritiCat - Система мониторинга критических значений лабораторных исследований
 
-<div align="center"> <img src="criticat_logo.png" width="200"> </div>
+<div align="center"> <img src="criticat_logo.svg" width="200"> </div>
 
 ## 📋 О проекте
 
