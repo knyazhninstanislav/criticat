@@ -2,7 +2,7 @@ import requests
 import json
 import sys
 
-BASE_URL = "http://176.98.181.45:26000"
+BASE_URL = "http://localhost:26000"
 
 
 def test_health():
