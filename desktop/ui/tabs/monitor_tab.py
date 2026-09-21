@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
                                QTextEdit, QPushButton, QLabel, QFrame)
 from PySide6.QtCore import Qt, QDateTime
 from PySide6.QtGui import QFont, QTextCursor, QColor
-from criti_cat_logo import CritiCatLogo
+from ui.criti_cat_logo import CritiCatLogo
 
 
 class MonitorTab(QWidget):

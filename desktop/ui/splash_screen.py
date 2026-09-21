@@ -2,7 +2,7 @@ from PySide6.QtWidgets import QSplashScreen
 from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint
 from PySide6.QtGui import (QPixmap, QPainter, QColor, QBrush, QPen, QFont,
                            QLinearGradient, QRadialGradient)
-from criti_cat_logo import CritiCatLogo
+from ui.criti_cat_logo import CritiCatLogo
 
 
 class CritiCatSplashScreen(QSplashScreen):

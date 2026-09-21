@@ -6,7 +6,7 @@ from PySide6.QtCore import QTimer, QSettings
 from ui.main_window import MainWindow
 from desktop.ui.splash_screen import SplashController
 from desktop.ui.themes import ThemeController
-from database import DatabaseManager
+from desktop.database.database import DatabaseManager
 from lis.factory import LisProviderFactory
 
 

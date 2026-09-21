@@ -5,15 +5,15 @@ from PySide6.QtWidgets import (QMainWindow, QTabWidget, QStatusBar,
                                QMessageBox, QVBoxLayout, QWidget, QPushButton)
 from PySide6.QtCore import Qt, QTimer
 
-from ui.vds_admin_tab import VdsAdminTab
-from ui.monitor_tab import MonitorTab
-from ui.settings_tab import SettingsTab
-from ui.history_tab import HistoryTab
-from ui.audit_tab import AuditTab
-from worker import CheckWorker
-from database import DatabaseManager
-from models import Settings
-from server_client import ServerClient
+from ui.tabs.vds_admin_tab import VdsAdminTab
+from ui.tabs.monitor_tab import MonitorTab
+from ui.tabs.settings_tab import SettingsTab
+from ui.tabs.history_tab import HistoryTab
+from ui.tabs.audit_tab import AuditTab
+from database.worker import CheckWorker
+from database.database import DatabaseManager
+from database.models import Settings
+from services.server_client import ServerClient
 from lis.base import LisProvider
 
 
@@ -388,7 +388,7 @@ class MainWindow(QMainWindow):
             pass
 
     def show_alerts_dialog(self, results):
-        from ui.alert_dialog import AlertDialog
+        from ui.dialogs.alert_dialog import AlertDialog
         self._close_current_alert_dialog()
         dialog = AlertDialog(results, self)
         self.current_alert_dialog = dialog

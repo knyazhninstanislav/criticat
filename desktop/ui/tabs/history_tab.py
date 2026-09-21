@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
                                QMessageBox, QMenu, QButtonGroup)
 from PySide6.QtCore import Qt, Signal, QDateTime
 from PySide6.QtGui import QColor, QFont
-from ui.search_widget import SearchWidget
+from ui.widgets.search_widget import SearchWidget
 from datetime import datetime
 
 

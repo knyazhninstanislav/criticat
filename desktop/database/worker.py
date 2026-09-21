@@ -2,7 +2,7 @@
 from PySide6.QtCore import QThread, Signal
 from typing import List
 
-from database import DatabaseManager
+from desktop.database.database import DatabaseManager
 from lis.base import LisProvider
 from services.critical_filter import CriticalFilterService
 

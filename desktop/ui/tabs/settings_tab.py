@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                                QLabel, QFrame, QScrollArea, QComboBox, QMessageBox,
                                QCheckBox, QTextEdit)
 from PySide6.QtCore import Qt
-from models import Settings
+from database.models import Settings
 
 
 class SettingsTab(QWidget):
@@ -411,7 +411,7 @@ class SettingsTab(QWidget):
 
     def open_test_settings(self):
         """Открытие окна настройки тестов"""
-        from ui.test_settings_dialog import TestSettingsDialog
+        from ui.dialogs.test_settings_dialog import TestSettingsDialog
 
         if not self.main_window.db_manager.is_connected():
             QMessageBox.warning(self, "Предупреждение", "Нет подключения к БД")
