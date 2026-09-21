@@ -100,8 +100,8 @@ class MainWindow(QMainWindow):
                 self._mark_result_as_confirmed(ids, test_name)
             else:
                 self.log_message(f"Нет данных в подтверждении: {confirmation}")
+
     def _mark_result_as_confirmed(self, ids: int, test_name: str):
-        """Помечает результат в игнор"""
         if not self.db_manager.is_connected():
             return
         try:
@@ -118,85 +118,75 @@ class MainWindow(QMainWindow):
                 self.excluded_ids.add(result_id)
                 self.monitor_tab.update_excluded_count(len(self.excluded_ids))
                 self.log_message(f"   ID:{result_id} помечен в игнор")
+                self.log_audit("telegram_accept", "Подтверждение из Telegram",
+                               "critical_results", str(result_id),
+                               f"ids={ids}, test={test_name}")
         except Exception as e:
             self.log_message(f"   Ошибка: {e}")
 
     def save_server_settings(self):
-        """Сохранение настроек VDS с проверкой авторизации"""
         try:
-            # Получаем настройки
             url = self.telegram_tab.server_url_input.text().strip()
             api_key = self.telegram_tab.api_key_input.text().strip()
             enabled = self.telegram_tab.server_enabled_cb.isChecked()
             interval = self.telegram_tab.poll_interval_spin.value()
 
-            # Сохраняем
             self.server_settings['url'] = url
             self.server_settings['api_key'] = api_key
             self.server_settings['enabled'] = enabled
             self.server_settings['poll_interval'] = interval
 
-            # Обновляем клиент
             self.server_client.set_server_url(url)
             self.server_client.set_api_key(api_key)
 
-            # Проверяем авторизацию если включено
             if enabled and url and api_key:
                 success, message = self.server_client.verify_auth()
                 if success:
                     self.log_message(f"✅ Авторизация VDS: {message}")
-                    # Запускаем polling
                     self.server_client.start_polling(interval)
                     self.log_message(f"✅ Опрос VDS запущен ({interval}с)")
+                    self.log_audit("settings_apply", "Настройки VDS применены",
+                                   "server", "", f"url={url}, interval={interval}")
                 else:
                     self.log_message(f"❌ Ошибка авторизации: {message}")
                     self.server_client.stop_polling()
+                    self.log_audit("error", "Ошибка авторизации VDS",
+                                   "server", "", message)
             else:
                 self.server_client.stop_polling()
                 if not api_key:
                     self.log_message("⚠️ API ключ не указан")
-
         except Exception as e:
             self.log_message(f"❌ Ошибка: {e}")
+            self.log_audit("error", "Ошибка сохранения настроек VDS",
+                           "server", "", str(e))
 
     def send_results_to_server(self, results) -> bool:
-        """Отправка результатов на VDS (с проверкой дубликатов)"""
         if not self.server_settings.get('enabled'):
             return False
-
         if not self.server_client.is_configured():
             return False
 
         try:
-            # Подготавливаем данные
-            prepared = []
-            for r in results:
-                prepared.append({
-                    'ids': int(r.get('ids', 0) or 0),
-                    'department': str(r.get('department', 'Не указано')),
-                    'test_name': str(r.get('test_name', 'Неизвестный тест')),
-                    'result_value': float(r.get('result_value', 0) or 0),
-                    'ref_lower': float(r['ref_lower']) if r.get('ref_lower') else 0,
-                    'ref_upper': float(r['ref_upper']) if r.get('ref_upper') else 0,
-                    'deviation_percent': float(r['deviation_percent']) if r.get('deviation_percent') else 0,
-                    'monitor_type': str(r.get('monitor_type', 'both')),
-                })
-
-            response = self.server_client.send_results(prepared)
-
+            response = self.server_client.send_results(results)
             sent = response.get('sent_count', 0)
             skipped = response.get('skipped_count', 0)
             failed = response.get('failed_count', 0)
 
             if response.get('success'):
                 self.log_message(f"✅ VDS: отправлено {sent}, пропущено {skipped}, ошибок {failed}")
+                self.log_audit("telegram_send", "Отправка результатов на VDS",
+                               "server", "", f"sent={sent}, skipped={skipped}, failed={failed}")
                 return True
             else:
                 self.log_message(f"❌ VDS: {response.get('message', '')}")
+                self.log_audit("error", "Ошибка отправки на VDS",
+                               "server", "", response.get('message', ''))
                 return False
-
         except Exception as e:
             self.log_message(f"❌ Исключение: {e}")
+            self.log_audit("error", "Исключение при отправке на VDS",
+                           "server", "", str(e))
             return False
 
 
@@ -235,8 +225,12 @@ class MainWindow(QMainWindow):
     def _on_ignore_toggled(self, result_id, is_ignored):
         if is_ignored:
             self.excluded_ids.add(result_id)
+            self.log_audit("ignored", "Результат помечен в игнор",
+                           "critical_results", str(result_id))
         else:
             self.excluded_ids.discard(result_id)
+            self.log_audit("unignored", "Снят игнор с результата",
+                           "critical_results", str(result_id))
         self.monitor_tab.update_excluded_count(len(self.excluded_ids))
 
     def log_message(self, message: str):
@@ -253,6 +247,8 @@ class MainWindow(QMainWindow):
         if self.db_manager.connect():
             self.status_bar.showMessage("✓ Подключено к БД")
             self.log_message("Соединение с БД установлено")
+            self.log_audit("db_connect", "Подключение к БД", "database", "",
+                           f"path={self.settings.db_path}")
             self.test_settings = self.db_manager.load_test_settings()
             monitored_tests = [n for n, c in self.test_settings.items() if c.get('monitored')]
             self.settings.monitored_tests = monitored_tests
@@ -263,6 +259,8 @@ class MainWindow(QMainWindow):
         else:
             self.status_bar.showMessage("✗ Ошибка подключения к БД")
             self.log_message("Ошибка подключения к БД")
+            self.log_audit("error", "Ошибка подключения к БД", "database", "",
+                           str(self.settings.db_path))
         self.restart_check_timer()
 
     def restart_check_timer(self):
@@ -285,6 +283,9 @@ class MainWindow(QMainWindow):
         self.is_checking = True
         self.monitor_tab.manual_check_btn.setEnabled(False)
 
+        self.log_audit("check_start", "Запуск проверки", "check", "",
+                       f"tests={len(self.settings.monitored_tests)}")
+
         self.test_settings = self.db_manager.load_test_settings()
 
         self.check_worker = CheckWorker(
@@ -301,23 +302,25 @@ class MainWindow(QMainWindow):
 
     def on_check_error(self, error_message):
         self.log_message(f"Ошибка: {error_message}")
+        self.log_audit("error", "Ошибка проверки", "check", "", error_message)
         self.is_checking = False
         self.monitor_tab.manual_check_btn.setEnabled(True)
 
     def on_check_finished(self, results):
-        """Обработка результатов проверки"""
         self.is_checking = False
         self.monitor_tab.manual_check_btn.setEnabled(True)
         self.status_bar.showMessage("✓ Проверка завершена")
 
         if results:
-            # Сохраняем в БД
             try:
                 self.db_manager.save_critical_results_batch(results)
+                self.log_audit("save_results_batch", "Пакетное сохранение результатов",
+                               "critical_results", "", f"count={len(results)}")
             except Exception as e:
                 self.log_message(f"Ошибка сохранения: {e}")
+                self.log_audit("error", "Ошибка сохранения результатов",
+                               "critical_results", "", str(e))
 
-            # Фильтруем
             filtered = []
             for r in results:
                 try:
@@ -329,17 +332,14 @@ class MainWindow(QMainWindow):
             if filtered:
                 self.log_message(f"Критических: {len(filtered)}")
 
-                # Отправка на VDS
                 if self.server_settings.get('enabled'):
                     try:
-                        # Подготавливаем данные
                         prepared = self._prepare_results_for_server(filtered)
                         if prepared:
                             self.send_results_to_server(prepared)
                     except Exception as e:
                         self.log_message(f"❌ Ошибка VDS: {e}")
 
-                # Показ диалога
                 try:
                     self.show_alerts_dialog(filtered)
                 except Exception as e:
@@ -349,12 +349,14 @@ class MainWindow(QMainWindow):
         else:
             self.log_message("Отклонений не найдено")
 
+        self.log_audit("check_finish", "Завершение проверки", "check", "",
+                       f"found={len(results)}")
+
         try:
             if self.tab_widget.currentWidget() == self.history_tab:
                 self.history_tab.refresh_data()
         except:
             pass
-
 
     def show_alerts_dialog(self, results):
         from ui.alert_dialog import AlertDialog
@@ -369,6 +371,8 @@ class MainWindow(QMainWindow):
             self.db_manager.set_ignored_status_batch(ignored_ids, True)
             if ignored_ids:
                 self.log_message(f"Игнорировано: {len(ignored_ids)}")
+                self.log_audit("batch_ignore", "Пакетное игнорирование",
+                               "critical_results", "", f"ids={ignored_ids}")
         self.monitor_tab.update_excluded_count(len(self.excluded_ids))
 
     def _close_current_alert_dialog(self):

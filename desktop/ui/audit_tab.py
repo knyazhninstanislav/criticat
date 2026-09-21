@@ -297,23 +297,32 @@ class AuditTab(QWidget):
         date_from = self.date_from_edit.date().toPython()
         date_to = self.date_to_edit.date().toPython()
 
-        # Преобразуем даты
+        # Нормализуем границы в один формат
         date_from_str = date_from.strftime("%Y-%m-%d 00:00:00")
         date_to_str = date_to.strftime("%Y-%m-%d 23:59:59")
 
         self.filtered_records = []
 
         for record in self.audit_records:
-            timestamp = record.get('timestamp', '')
+            timestamp = (record.get('timestamp') or '').strip()
             record_action_type = record.get('action_type', '')
 
-            # Фильтр по типу
             if action_type and record_action_type != action_type:
                 continue
 
-            # Фильтр по дате
-            if timestamp and date_from_str and date_to_str:
-                if not (date_from_str <= timestamp <= date_to_str):
+            # Если timestamp пустой — не отбрасываем запись, а показываем
+            if timestamp:
+                # Нормализуем: заменяем 'T' на пробел и обрезаем до секунд
+                ts_norm = timestamp.replace('T', ' ')
+                if '.' in ts_norm:
+                    ts_norm = ts_norm.split('.')[0]
+                # Убедимся, что формат YYYY-MM-DD HH:MM:SS (19 символов)
+                if len(ts_norm) >= 19:
+                    ts_norm = ts_norm[:19]
+                # Если короче (например, только дата) — дополним
+                if len(ts_norm) == 10:
+                    ts_norm = ts_norm + " 00:00:00"
+                if not (date_from_str <= ts_norm <= date_to_str):
                     continue
 
             self.filtered_records.append(record)
