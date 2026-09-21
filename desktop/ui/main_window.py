@@ -12,7 +12,7 @@ from worker import CheckWorker
 from database import DatabaseManager
 from models import Settings
 from server_client import ServerClient
-from mqtt_client import MQTTClient
+
 
 
 class MainWindow(QMainWindow):
@@ -24,17 +24,6 @@ class MainWindow(QMainWindow):
         self.timer = None
         self.excluded_ids = set()
         self.is_checking = False
-
-        self.mqtt_client = MQTTClient()
-        self.mqtt_settings = {
-            'host': '176.98.181.45',
-            'port': 18830,
-            'username': 'desktop_app',
-            'password': 'your-password',
-            'enabled': False,
-            'poll_interval': 30
-        }
-        self.mqtt_client.register_callback(self._on_mqtt_confirmation)
 
         # VDS Server
         self.server_client = ServerClient()
@@ -210,101 +199,6 @@ class MainWindow(QMainWindow):
             self.log_message(f"❌ Исключение: {e}")
             return False
 
-    def _on_mqtt_confirmation(self, confirmations):
-        """Обработка подтверждений через MQTT"""
-        for confirmation in confirmations:
-            if not isinstance(confirmation, dict):
-                continue
-
-            ids = confirmation.get('ids')
-            test_name = confirmation.get('test_name')
-            result_key = confirmation.get('result_key')
-
-            if ids and test_name:
-                self.log_message(f"✅ Подтверждено через MQTT: IDS={ids}, {test_name}")
-                self._mark_result_as_confirmed(ids, test_name)
-
-    def send_results_to_mqtt(self, results) -> bool:
-        """Отправка результатов через MQTT"""
-        if not self.mqtt_settings.get('enabled'):
-            return False
-
-        if not self.mqtt_client.is_connected():
-            return False
-
-        try:
-            prepared = []
-            for r in results:
-                prepared.append({
-                    'ids': int(r.get('ids', 0) or 0),
-                    'department': str(r.get('department', 'Не указано')),
-                    'test_name': str(r.get('test_name', 'Неизвестный тест')),
-                    'result_value': float(r.get('result_value', 0) or 0),
-                    'ref_lower': float(r['ref_lower']) if r.get('ref_lower') is not None else None,
-                    'ref_upper': float(r['ref_upper']) if r.get('ref_upper') is not None else None,
-                    'deviation_percent': float(r['deviation_percent']) if r.get(
-                        'deviation_percent') is not None else None,
-                    'monitor_type': str(r.get('monitor_type', 'both')),
-                })
-
-            response = self.mqtt_client.publish_results(prepared)
-
-            sent = response.get('sent_count', 0)
-            skipped = response.get('skipped_count', 0)
-            failed = response.get('failed_count', 0)
-
-            if response.get('success'):
-                self.log_message(f"✅ MQTT: отправлено {sent}, пропущено {skipped}, ошибок {failed}")
-                return True
-            else:
-                self.log_message(f"❌ MQTT: {response.get('message', '')}")
-                return False
-
-        except Exception as e:
-            self.log_message(f"❌ MQTT исключение: {e}")
-            return False
-
-    def save_mqtt_settings(self):
-        """Сохранение настроек MQTT"""
-        try:
-            # Получаем настройки из вкладки (нужно добавить поля в TelegramTab)
-            host = self.telegram_tab.mqtt_host_input.text().strip()
-            port = self.telegram_tab.mqtt_port_spin.value()
-            username = self.telegram_tab.mqtt_username_input.text().strip()
-            password = self.telegram_tab.mqtt_password_input.text().strip()
-            enabled = self.telegram_tab.mqtt_enabled_cb.isChecked()
-            interval = self.telegram_tab.mqtt_poll_interval_spin.value()
-
-            self.mqtt_settings['host'] = host
-            self.mqtt_settings['port'] = port
-            self.mqtt_settings['username'] = username
-            self.mqtt_settings['password'] = password
-            self.mqtt_settings['enabled'] = enabled
-            self.mqtt_settings['poll_interval'] = interval
-
-            # Обновляем клиент
-            self.mqtt_client.broker_host = host
-            self.mqtt_client.broker_port = port
-            self.mqtt_client.username = username
-            self.mqtt_client.password = password
-            self.mqtt_client._init_client()
-
-            if enabled and host:
-                if self.mqtt_client.connect():
-                    self.log_message(f"✅ MQTT подключен к {host}:{port}")
-                    self.mqtt_client.start_polling(interval)
-                    self.mqtt_client.publish_status("online", "Клиент подключен")
-                else:
-                    self.log_message(f"❌ Ошибка подключения MQTT")
-                    self.mqtt_client.stop_polling()
-            else:
-                self.mqtt_client.stop_polling()
-                self.mqtt_client.disconnect()
-
-        except Exception as e:
-            self.log_message(f"❌ MQTT ошибка: {e}")
-
-    # ========== ОСТАЛЬНЫЕ МЕТОДЫ (без изменений) ==========
 
     def _update_theme_button_text(self):
         if self._get_current_theme() == 'dark':
@@ -445,15 +339,6 @@ class MainWindow(QMainWindow):
                     except Exception as e:
                         self.log_message(f"❌ Ошибка VDS: {e}")
 
-                # Отправка через MQTT
-                if self.mqtt_settings.get('enabled'):
-                    try:
-                        prepared = self._prepare_results_for_server(filtered)
-                        if prepared:
-                            self.send_results_to_mqtt(prepared)
-                    except Exception as e:
-                        self.log_message(f"❌ Ошибка MQTT: {e}")
-
                 # Показ диалога
                 try:
                     self.show_alerts_dialog(filtered)
@@ -501,7 +386,6 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         self._close_current_alert_dialog()
         self.server_client.stop_polling()
-        self.mqtt_client.close()  # Добавьте эту строку
         if self.timer:
             self.timer.stop()
         self.db_manager.disconnect()
