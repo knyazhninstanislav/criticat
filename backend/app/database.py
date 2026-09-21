@@ -2,7 +2,7 @@
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import logging
 import sqlite3
@@ -29,11 +29,11 @@ class AnonymizedResult(Base):
     deviation_percent = Column(Float, nullable=True)
     monitor_type = Column(String, default='both')
     status = Column(String, default='pending')  # pending, sent, confirmed, rejected, expired
-    acknowledged = Column(Boolean, default=False)  # Десктоп подтвердил получение
+    acknowledged = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    telegram_message_id = Column(String, nullable=True)
-    telegram_chat_id = Column(String, nullable=True)
+    push_message_id = Column(String, nullable=True)
+    mobile_user_id = Column(String, nullable=True)
     confirmed_at = Column(DateTime, nullable=True)
     confirmed_by = Column(String, nullable=True)
     rejection_reason = Column(String, nullable=True)
@@ -45,12 +45,12 @@ class AnonymizedResult(Base):
     )
 
 
-class TelegramUser(Base):
-    """Пользователь Telegram"""
-    __tablename__ = "telegram_users"
+class MobileUser(Base):
+    """Пользователь мобильного приложения"""
+    __tablename__ = "mobile_users"
 
     id = Column(Integer, primary_key=True, index=True)
-    chat_id = Column(String, unique=True, index=True)
+    user_id = Column(String, unique=True, index=True)   # внутренний ID
     username = Column(String, nullable=True)
     full_name = Column(String, nullable=True)
     department = Column(String, nullable=True)
@@ -66,7 +66,7 @@ class NotificationLog(Base):
     id = Column(Integer, primary_key=True, index=True)
     result_id = Column(Integer, nullable=True)
     result_key = Column(String, nullable=True, index=True)
-    chat_id = Column(String, nullable=True)
+    user_id = Column(String, nullable=True)
     message_id = Column(String, nullable=True)
     action = Column(String)  # sent, confirmed, rejected, expired, failed
     details = Column(Text, nullable=True)
@@ -78,14 +78,12 @@ class NotificationLog(Base):
 
 
 def get_db_path() -> str:
-    """Получение пути к SQLite файлу"""
     if settings.database_url.startswith('sqlite:///'):
         return settings.database_url.replace('sqlite:///', '')
     return ''
 
 
 def ensure_db_directory():
-    """Создание директории для БД"""
     db_path = get_db_path()
     if db_path:
         db_dir = os.path.dirname(db_path)
@@ -96,18 +94,16 @@ def ensure_db_directory():
 
 
 def ensure_db_writable():
-    """Проверка прав на запись"""
     db_path = get_db_path()
     if db_path and os.path.exists(db_path):
         try:
             os.chmod(db_path, 0o666)
-            logger.info(f"Права на БД установлены: {db_path}")
         except Exception as e:
             logger.warning(f"Не удалось изменить права: {e}")
 
 
 def migrate_database():
-    """Миграция БД"""
+    """Миграция БД: переименование TG-таблиц в mobile_users"""
     db_path = get_db_path()
     if not db_path or not os.path.exists(db_path):
         return
@@ -116,18 +112,46 @@ def migrate_database():
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
+        # Проверяем, есть ли старая таблица telegram_users
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='telegram_users'")
+        if cursor.fetchone():
+            logger.info("Найдена старая таблица telegram_users, мигрируем...")
+            # Переименовываем таблицу
+            cursor.execute("ALTER TABLE telegram_users RENAME TO mobile_users")
+            # Переименовываем колонки
+            cursor.execute("PRAGMA table_info(mobile_users)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if 'chat_id' in columns:
+                # SQLite не поддерживает RENAME COLUMN до 3.25, но обычно поддерживает
+                try:
+                    cursor.execute("ALTER TABLE mobile_users RENAME COLUMN chat_id TO user_id")
+                    logger.info("Переименована колонка chat_id → user_id")
+                except Exception as e:
+                    logger.warning(f"Не удалось переименовать chat_id: {e}")
+
         # Проверяем колонки anonymized_results
         cursor.execute("PRAGMA table_info(anonymized_results)")
         columns = [col[1] for col in cursor.fetchall()]
 
-        # Добавляем недостающие колонки
         if 'rejection_reason' not in columns:
             cursor.execute("ALTER TABLE anonymized_results ADD COLUMN rejection_reason TEXT")
-            logger.info("Добавлена колонка rejection_reason")
 
         if 'attempts_count' not in columns:
             cursor.execute("ALTER TABLE anonymized_results ADD COLUMN attempts_count INTEGER DEFAULT 0")
-            logger.info("Добавлена колонка attempts_count")
+
+        if 'telegram_chat_id' in columns:
+            try:
+                cursor.execute("ALTER TABLE anonymized_results RENAME COLUMN telegram_chat_id TO mobile_user_id")
+                logger.info("Переименована колонка telegram_chat_id → mobile_user_id")
+            except Exception as e:
+                logger.warning(f"Не удалось переименовать telegram_chat_id: {e}")
+
+        if 'telegram_message_id' in columns:
+            try:
+                cursor.execute("ALTER TABLE anonymized_results RENAME COLUMN telegram_message_id TO push_message_id")
+                logger.info("Переименована колонка telegram_message_id → push_message_id")
+            except Exception as e:
+                logger.warning(f"Не удалось переименовать telegram_message_id: {e}")
 
         conn.commit()
         conn.close()
@@ -136,38 +160,27 @@ def migrate_database():
         logger.error(f"Ошибка миграции: {e}")
 
 
-# Инициализация
 ensure_db_directory()
 ensure_db_writable()
 
-# Создание engine
 if settings.database_url.startswith('sqlite'):
     engine = create_engine(
         settings.database_url,
-        connect_args={
-            "check_same_thread": False,
-            "timeout": 30,
-        },
+        connect_args={"check_same_thread": False, "timeout": 30},
         pool_pre_ping=True,
         echo=False,
     )
 else:
-    engine = create_engine(
-        settings.database_url,
-        pool_pre_ping=True,
-    )
+    engine = create_engine(settings.database_url, pool_pre_ping=True)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def init_db():
-    """Инициализация базы данных"""
     logger.info("Инициализация базы данных...")
-
     ensure_db_directory()
     Base.metadata.create_all(bind=engine)
     logger.info("Таблицы созданы")
-
     migrate_database()
     ensure_db_writable()
 
@@ -178,7 +191,6 @@ def init_db():
 
 
 def get_db():
-    """Получение сессии БД"""
     db = SessionLocal()
     try:
         yield db
@@ -187,36 +199,29 @@ def get_db():
 
 
 def get_db_session():
-    """Получение сессии БД"""
     return SessionLocal()
 
 
 def close_db_session(db):
-    """Закрытие сессии"""
     if db:
         db.close()
-        
-        
-# app/database.py - добавьте в конец файла
+
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 
 def get_result_by_key(db, result_key: str):
-    """Получение результата по ключу"""
     return db.query(AnonymizedResult).filter(
         AnonymizedResult.result_key == result_key
     ).first()
 
 
 def get_result_by_id(db, result_id: int):
-    """Получение результата по ID"""
     return db.query(AnonymizedResult).filter(
         AnonymizedResult.id == result_id
     ).first()
 
 
 def update_result_status(db, result_key: str, status: str):
-    """Обновление статуса результата"""
     result = get_result_by_key(db, result_key)
     if result:
         result.status = status
@@ -226,26 +231,24 @@ def update_result_status(db, result_key: str, status: str):
     return False
 
 
-def mark_as_confirmed(db, result_key: str, chat_id: str):
-    """Пометка результата как подтвержденного"""
+def mark_as_confirmed(db, result_key: str, user_id: str):
     result = get_result_by_key(db, result_key)
     if result:
         result.status = 'confirmed'
         result.confirmed_at = datetime.utcnow()
-        result.confirmed_by = chat_id
+        result.confirmed_by = user_id
         result.updated_at = datetime.utcnow()
         db.commit()
         return True
     return False
 
 
-def mark_as_rejected(db, result_key: str, chat_id: str, reason: str = None):
-    """Пометка результата как отклоненного"""
+def mark_as_rejected(db, result_key: str, user_id: str, reason: str = None):
     result = get_result_by_key(db, result_key)
     if result:
         result.status = 'rejected'
         result.confirmed_at = datetime.utcnow()
-        result.confirmed_by = chat_id
+        result.confirmed_by = user_id
         result.rejection_reason = reason
         result.updated_at = datetime.utcnow()
         db.commit()
@@ -254,7 +257,6 @@ def mark_as_rejected(db, result_key: str, chat_id: str, reason: str = None):
 
 
 def mark_as_acknowledged(db, result_key: str):
-    """Пометка результата как полученного десктопом"""
     result = get_result_by_key(db, result_key)
     if result:
         result.acknowledged = True
@@ -265,14 +267,11 @@ def mark_as_acknowledged(db, result_key: str):
 
 
 def delete_result(db, result_key: str) -> bool:
-    """Удаление результата и связанных логов"""
     try:
-        # Удаляем логи
         db.query(NotificationLog).filter(
             NotificationLog.result_key == result_key
         ).delete()
-        
-        # Удаляем результат
+
         result = get_result_by_key(db, result_key)
         if result:
             db.delete(result)
@@ -287,21 +286,18 @@ def delete_result(db, result_key: str) -> bool:
 
 
 def get_pending_results(db) -> list:
-    """Получение ожидающих результатов"""
     return db.query(AnonymizedResult).filter(
         AnonymizedResult.status == 'pending'
     ).all()
 
 
 def get_sent_results(db) -> list:
-    """Получение отправленных результатов"""
     return db.query(AnonymizedResult).filter(
         AnonymizedResult.status == 'sent'
     ).all()
 
 
 def get_confirmed_results(db) -> list:
-    """Получение подтвержденных результатов (не удаленных)"""
     return db.query(AnonymizedResult).filter(
         AnonymizedResult.status == 'confirmed',
         AnonymizedResult.acknowledged == False
@@ -309,23 +305,20 @@ def get_confirmed_results(db) -> list:
 
 
 def get_all_results(db) -> list:
-    """Получение всех результатов"""
     return db.query(AnonymizedResult).order_by(
         AnonymizedResult.created_at.desc()
     ).all()
 
 
 def get_active_users(db) -> list:
-    """Получение активных пользователей"""
-    return db.query(TelegramUser).filter(
-        TelegramUser.is_active == True
+    return db.query(MobileUser).filter(
+        MobileUser.is_active == True
     ).all()
 
 
-def add_user(db, chat_id: str, username: str = '', full_name: str = '', department: str = ''):
-    """Добавление пользователя"""
-    user = TelegramUser(
-        chat_id=chat_id,
+def add_user(db, user_id: str, username: str = '', full_name: str = '', department: str = ''):
+    user = MobileUser(
+        user_id=user_id,
         username=username,
         full_name=full_name,
         department=department,
@@ -336,11 +329,8 @@ def add_user(db, chat_id: str, username: str = '', full_name: str = '', departme
     return user
 
 
-def deactivate_user(db, chat_id: str) -> bool:
-    """Деактивация пользователя"""
-    user = db.query(TelegramUser).filter(
-        TelegramUser.chat_id == chat_id
-    ).first()
+def deactivate_user(db, user_id: str) -> bool:
+    user = db.query(MobileUser).filter(MobileUser.user_id == user_id).first()
     if user:
         user.is_active = False
         db.commit()
@@ -348,13 +338,12 @@ def deactivate_user(db, chat_id: str) -> bool:
     return False
 
 
-def add_notification_log(db, result_id: int, result_key: str, chat_id: str, 
+def add_notification_log(db, result_id: int, result_key: str, user_id: str,
                          message_id: str, action: str, details: str = None):
-    """Добавление лога уведомления"""
     log = NotificationLog(
         result_id=result_id,
         result_key=result_key,
-        chat_id=chat_id,
+        user_id=user_id,
         message_id=message_id,
         action=action,
         details=details,
@@ -365,7 +354,6 @@ def add_notification_log(db, result_id: int, result_key: str, chat_id: str,
 
 
 def get_statistics(db) -> dict:
-    """Получение статистики"""
     total = db.query(AnonymizedResult).count()
     pending = db.query(AnonymizedResult).filter(AnonymizedResult.status == 'pending').count()
     sent = db.query(AnonymizedResult).filter(AnonymizedResult.status == 'sent').count()
@@ -373,7 +361,7 @@ def get_statistics(db) -> dict:
     rejected = db.query(AnonymizedResult).filter(AnonymizedResult.status == 'rejected').count()
     expired = db.query(AnonymizedResult).filter(AnonymizedResult.status == 'expired').count()
     acknowledged = db.query(AnonymizedResult).filter(AnonymizedResult.acknowledged == True).count()
-    
+
     return {
         'total': total,
         'pending': pending,
@@ -386,17 +374,14 @@ def get_statistics(db) -> dict:
 
 
 def cleanup_old_results(db, days: int = 7) -> int:
-    """Очистка результатов старше N дней"""
     cutoff = datetime.utcnow() - timedelta(days=days)
-    
     old_results = db.query(AnonymizedResult).filter(
         AnonymizedResult.created_at < cutoff,
         AnonymizedResult.status.in_(['confirmed', 'rejected', 'expired'])
     ).all()
-    
+
     deleted = 0
     for result in old_results:
         if delete_result(db, result.result_key):
             deleted += 1
-    
     return deleted

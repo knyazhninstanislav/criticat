@@ -1,8 +1,9 @@
 # models.py
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from datetime import datetime
 from enum import Enum
+
 
 class ResultStatus(str, Enum):
     PENDING = 'pending'
@@ -11,6 +12,7 @@ class ResultStatus(str, Enum):
     REJECTED = 'rejected'
     EXPIRED = 'expired'
     FAILED = 'failed'
+
 
 class CriticalResultRequest(BaseModel):
     """Запрос на отправку критического результата"""
@@ -23,6 +25,7 @@ class CriticalResultRequest(BaseModel):
     deviation_percent: Optional[float] = Field(None, description="Процент отклонения")
     monitor_type: str = Field('both', description="Тип мониторинга")
 
+
 class ResultResponse(BaseModel):
     """Ответ с результатом"""
     result_key: str
@@ -33,24 +36,28 @@ class ResultResponse(BaseModel):
     status: str
     created_at: datetime
 
+
 class ConfirmationRequest(BaseModel):
     """Запрос на подтверждение"""
     result_keys: List[str] = Field(..., description="Список ключей результатов")
 
+
 class UserRequest(BaseModel):
     """Запрос на добавление пользователя"""
-    chat_id: str
+    user_id: str
     username: Optional[str] = None
     full_name: Optional[str] = None
     department: Optional[str] = None
 
+
 class UserResponse(BaseModel):
     """Ответ с информацией о пользователе"""
-    chat_id: str
+    user_id: str
     username: Optional[str] = None
     full_name: Optional[str] = None
     department: Optional[str] = None
     is_active: bool = True
+
 
 # RabbitMQ сообщения
 class ResultMessage(BaseModel):
@@ -69,14 +76,16 @@ class ResultMessage(BaseModel):
     created_at: str
     attempts: int = 0
 
+
 class UserResponseMessage(BaseModel):
     """Ответ пользователя"""
     result_id: int
     result_key: str
     action: str  # 'approved' или 'rejected'
-    chat_id: str
+    user_id: str
     username: Optional[str] = None
     timestamp: str
+
 
 class ConfirmationResultMessage(BaseModel):
     """Подтверждение для десктопа"""

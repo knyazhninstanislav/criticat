@@ -24,7 +24,6 @@ class RabbitMQClient:
         self._lock = asyncio.Lock()
 
     async def connect(self) -> bool:
-        """Подключение к RabbitMQ с реконнектом"""
         async with self._lock:
             if self._is_connected and self.connection and not self.connection.is_closed:
                 return True
@@ -35,14 +34,12 @@ class RabbitMQClient:
 
                 logger.info(f"Connecting to RabbitMQ at {settings.rabbitmq_host}:{settings.rabbitmq_port}")
 
-                # connect_robust автоматически переподключается
                 self.connection = await aio_pika.connect_robust(
                     url,
-                    reconnect_interval=5,  # попытка каждые 5 секунд
-                    fail_fast=False,  # не падать сразу, пытаться подключиться
+                    reconnect_interval=5,
+                    fail_fast=False,
                 )
 
-                # Регистрируем callbacks для отслеживания состояния
                 self.connection.reconnect_callbacks.add(self._on_reconnect)
                 self.connection.close_callbacks.add(self._on_close)
 
@@ -54,9 +51,7 @@ class RabbitMQClient:
                 self._is_connected = True
                 logger.info("✅ Connected to RabbitMQ successfully")
 
-                # Восстанавливаем consumers, если были
                 await self._restore_consumers()
-
                 return True
 
             except Exception as e:
@@ -65,22 +60,17 @@ class RabbitMQClient:
                 return False
 
     def _on_reconnect(self, connection):
-        """Callback при переподключении"""
         logger.info("🔄 RabbitMQ reconnected")
         self._is_connected = True
-        # Восстанавливаем consumers в фоне
         asyncio.create_task(self._restore_consumers())
 
     def _on_close(self, connection, exc):
-        """Callback при закрытии соединения"""
         logger.warning(f"🔌 RabbitMQ connection closed: {exc}")
         self._is_connected = False
 
     async def _restore_consumers(self):
-        """Восстановление consumers после переподключения"""
         if not self._consumers_to_restore:
             return
-
         logger.info(f"Restoring {len(self._consumers_to_restore)} consumers...")
         for queue_name, callback in self._consumers_to_restore.items():
             try:
@@ -89,7 +79,7 @@ class RabbitMQClient:
                 logger.error(f"Failed to restore consumer for {queue_name}: {e}")
 
     async def _setup_queues_and_exchanges(self):
-        """Настройка очередей и обменников"""
+        """Настройка очередей и обменников (без Telegram)"""
         logger.info("Setting up queues and exchanges...")
 
         main_exchange = await self.channel.declare_exchange(
@@ -112,20 +102,7 @@ class RabbitMQClient:
         )
         await incoming_queue.bind(main_exchange, 'lab.results.raw')
 
-        # 2. Telegram
-        telegram_queue = await self.channel.declare_queue(
-            settings.queue_telegram,
-            durable=True,
-            arguments={
-                'x-queue-type': 'classic',
-                'x-message-ttl': settings.message_ttl,
-                'x-dead-letter-exchange': settings.exchange_dlx,
-                'x-dead-letter-routing-key': 'retry.telegram',
-            }
-        )
-        await telegram_queue.bind(main_exchange, 'alert.telegram')
-
-        # 3. App
+        # 2. App (мобильное приложение)
         app_queue = await self.channel.declare_queue(
             settings.queue_app,
             durable=True,
@@ -138,7 +115,7 @@ class RabbitMQClient:
         )
         await app_queue.bind(main_exchange, 'alert.app')
 
-        # 4. Pending
+        # 3. Pending
         pending_queue = await self.channel.declare_queue(
             settings.queue_pending,
             durable=True,
@@ -146,7 +123,7 @@ class RabbitMQClient:
         )
         await pending_queue.bind(main_exchange, 'pending.confirmation')
 
-        # 5. Response
+        # 4. Response
         response_queue = await self.channel.declare_queue(
             settings.queue_response,
             durable=True,
@@ -154,7 +131,7 @@ class RabbitMQClient:
         )
         await response_queue.bind(main_exchange, 'response.processed')
 
-        # 6. Rejected
+        # 5. Rejected
         rejected_queue = await self.channel.declare_queue(
             settings.queue_rejected,
             durable=True,
@@ -162,7 +139,7 @@ class RabbitMQClient:
         )
         await rejected_queue.bind(main_exchange, 'result.rejected')
 
-        # 7. Desktop confirmation
+        # 6. Desktop confirmation
         desktop_queue = await self.channel.declare_queue(
             settings.queue_desktop_confirmation,
             durable=True,
@@ -170,7 +147,7 @@ class RabbitMQClient:
         )
         await desktop_queue.bind(main_exchange, 'desktop.confirmation')
 
-        # 8. Retry
+        # 7. Retry
         retry_queue = await self.channel.declare_queue(
             settings.queue_retry_delay,
             durable=True,
@@ -178,19 +155,17 @@ class RabbitMQClient:
                 'x-queue-type': 'classic',
                 'x-message-ttl': settings.retry_delay,
                 'x-dead-letter-exchange': settings.exchange_main,
-                'x-dead-letter-routing-key': 'alert.telegram',
+                'x-dead-letter-routing-key': 'alert.app',
             }
         )
-        await retry_queue.bind(dlx_exchange, 'retry.telegram')
         await retry_queue.bind(dlx_exchange, 'retry.app')
 
-        # 9. Failed
+        # 8. Failed
         failed_queue = await self.channel.declare_queue(
             settings.queue_failed,
             durable=True,
             arguments={'x-queue-type': 'classic'}
         )
-        await failed_queue.bind(dlx_exchange, 'failed.telegram')
         await failed_queue.bind(dlx_exchange, 'failed.app')
 
         logger.info("✅ All queues and exchanges configured")
@@ -202,7 +177,6 @@ class RabbitMQClient:
             exchange: str = None,
             priority: int = 0
     ) -> bool:
-        """Публикация сообщения"""
         if not self._is_connected or not self.channel or self.channel.is_closed:
             logger.error(f"Cannot publish to {routing_key}: not connected")
             return False
@@ -236,12 +210,6 @@ class RabbitMQClient:
             queue_name: str,
             callback: Callable[[Dict[str, Any], Any], Awaitable[None]]
     ):
-        """
-        Подписка на очередь.
-
-        ВАЖНО: callback НЕ должен вызывать message.ack() или message.nack() —
-        это делается автоматически через message.process().
-        """
         if not self._is_connected or not self.channel:
             logger.error(f"Cannot consume {queue_name}: not connected")
             return
@@ -255,18 +223,14 @@ class RabbitMQClient:
                 async with queue.iterator() as queue_iter:
                     async for message in queue_iter:
                         try:
-                            # process() САМ делает ack при успехе / nack при исключении
                             async with message.process(requeue=False, reject_on_redelivered=False):
                                 body = json.loads(message.body.decode())
                                 logger.debug(f"Received from {queue_name}")
                                 await callback(body, message)
                         except json.JSONDecodeError as e:
                             logger.error(f"Invalid JSON in {queue_name}: {e}")
-                            # process() сделает nack автоматически
                         except Exception as e:
                             logger.error(f"Error processing from {queue_name}: {e}")
-                            # process() сделает nack автоматически
-                        # НЕ пытаемся делать ack/nack повторно!
 
             except asyncio.CancelledError:
                 logger.info(f"Consumer for {queue_name} cancelled")
@@ -279,21 +243,15 @@ class RabbitMQClient:
                     break
 
     async def health_check(self) -> bool:
-        """Проверка реального состояния соединения"""
         if not self._is_connected:
             return False
-
         if not self.connection or self.connection.is_closed:
             self._is_connected = False
             return False
-
         if not self.channel or self.channel.is_closed:
             self._is_connected = False
             return False
-
-        # Реальная проверка через ping
         try:
-            # Открываем временный канал для проверки
             test_channel = await self.connection.channel()
             await test_channel.close()
             return True
@@ -303,7 +261,6 @@ class RabbitMQClient:
             return False
 
     def is_connected(self) -> bool:
-        """Быстрая проверка (без сети)"""
         if not self._is_connected:
             return False
         if not self.connection or self.connection.is_closed:
@@ -313,10 +270,6 @@ class RabbitMQClient:
         return True
 
     async def ensure_connected(self, max_wait: int = 30) -> bool:
-        """
-        Гарантирует подключение. Если не подключено — пытается переподключиться.
-        Возвращает True если удалось подключиться.
-        """
         if self.is_connected():
             return True
 
@@ -332,7 +285,6 @@ class RabbitMQClient:
         return False
 
     async def close(self):
-        """Закрытие соединения"""
         self._is_connected = False
         if self.connection and not self.connection.is_closed:
             try:
@@ -342,5 +294,4 @@ class RabbitMQClient:
         logger.info("RabbitMQ connection closed")
 
 
-# Глобальный экземпляр
 rabbitmq_client = RabbitMQClient()

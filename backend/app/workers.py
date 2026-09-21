@@ -5,10 +5,10 @@ import threading
 from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
+
 from .config import settings
 from .database import init_db, AnonymizedResult
 from .rabbitmq_client import rabbitmq_client
-from .telegram_bot import TelegramBot
 from .message_handlers import MessageHandlers
 from .result_service import ResultService
 from .models import ResultStatus
@@ -17,8 +17,6 @@ logger = logging.getLogger(__name__)
 
 
 class HealthHandler(BaseHTTPRequestHandler):
-    """Healthcheck handler"""
-
     def do_GET(self):
         if self.path == '/health':
             self.send_response(200)
@@ -38,7 +36,6 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 
 def start_health_server(port: int = 8080):
-    """Запуск healthcheck сервера"""
     try:
         server = HTTPServer(('0.0.0.0', port), HealthHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -51,46 +48,37 @@ def start_health_server(port: int = 8080):
 
 
 class ResultWorker:
-    """Worker для обработки результатов"""
+    """Worker для обработки результатов (без Telegram)"""
 
     def __init__(self):
-        self.telegram_bot = TelegramBot(settings.telegram_token)
-        self.handlers = MessageHandlers(self.telegram_bot)
+        self.handlers = MessageHandlers()
         self.running = True
         self._health_server = None
 
     async def start(self):
-        """Запуск worker"""
         logger.info("=" * 60)
         logger.info("WORKER ЗАПУЩЕН")
-        logger.info(f"Telegram token: {'настроен' if settings.telegram_token else 'НЕ НАСТРОЕН'}")
         logger.info(f"База данных: {settings.database_url}")
         logger.info(f"RabbitMQ: {settings.rabbitmq_host}:{settings.rabbitmq_port}")
         logger.info("=" * 60)
 
-        # Инициализация БД
         init_db()
 
-        # Подключение к RabbitMQ
         if not await rabbitmq_client.connect():
             logger.error("Не удалось подключиться к RabbitMQ")
             return
 
-        # Запускаем consumers
         await self._setup_consumers()
 
-        # Запускаем фоновые задачи
         await asyncio.gather(
             self._process_pending_timeouts(),
             self._process_expired_confirmations(),
         )
 
     async def _setup_consumers(self):
-        """Настройка consumers"""
         consumers = [
             (settings.queue_incoming, self.handlers.handle_incoming_result),
-            (settings.queue_telegram, self.handlers.handle_alert_telegram),
-            (settings.queue_app, self.handlers.handle_alert_telegram),  # Можно использовать тот же обработчик
+            (settings.queue_app, self.handlers.handle_alert_app),
             (settings.queue_response, self.handlers.handle_user_response),
             (settings.queue_rejected, self.handlers.handle_rejected_result),
             (settings.queue_desktop_confirmation, self.handlers.handle_desktop_confirmation),
@@ -101,12 +89,9 @@ class ResultWorker:
             logger.info(f"Consumer started for {queue_name}")
 
     async def _process_pending_timeouts(self):
-        """Проверка просроченных результатов"""
         while self.running:
             try:
                 service = ResultService()
-
-                # Получаем отправленные результаты старше N часов
                 timeout = datetime.utcnow() - timedelta(hours=settings.pending_timeout_hours)
 
                 pending_results = service.db.query(AnonymizedResult).filter(
@@ -116,11 +101,8 @@ class ResultWorker:
 
                 for result in pending_results:
                     logger.info(f"Result {result.result_key} expired (timeout)")
-
-                    # Отмечаем как просроченный
                     service.mark_as_expired(result.id)
 
-                    # Отправляем в очередь отклоненных
                     rejected_data = {
                         'result_id': result.id,
                         'result_key': result.result_key,
@@ -134,15 +116,12 @@ class ResultWorker:
             except Exception as e:
                 logger.error(f"Error processing pending timeouts: {e}", exc_info=True)
 
-            await asyncio.sleep(60)  # Проверяем каждую минуту
+            await asyncio.sleep(60)
 
     async def _process_expired_confirmations(self):
-        """Обработка просроченных подтверждений"""
         while self.running:
             try:
                 service = ResultService()
-
-                # Получаем подтвержденные результаты старше 1 часа, которые не были подтверждены десктопом
                 cutoff = datetime.utcnow() - timedelta(hours=1)
 
                 confirmed_results = service.db.query(AnonymizedResult).filter(
@@ -152,7 +131,6 @@ class ResultWorker:
                 ).all()
 
                 for result in confirmed_results:
-                    # Повторно отправляем подтверждение на десктоп
                     confirmation_data = {
                         'result_id': result.id,
                         'result_key': result.result_key,
@@ -168,20 +146,16 @@ class ResultWorker:
             except Exception as e:
                 logger.error(f"Error processing expired confirmations: {e}", exc_info=True)
 
-            await asyncio.sleep(300)  # Проверяем каждые 5 минут
+            await asyncio.sleep(300)
 
     def stop(self):
-        """Остановка worker"""
         self.running = False
         logger.info("Worker остановлен")
 
 
 def main():
-    """Основная функция"""
-    # Запускаем healthcheck сервер
-    health_server = start_health_server(8080)
+    start_health_server(8080)
 
-    # Создаем и запускаем worker
     worker = ResultWorker()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
