@@ -420,8 +420,8 @@ class SettingsTab(QWidget):
         saved_settings = self.main_window.db_manager.load_test_settings()
 
         if not saved_settings:
-            test_names = self.main_window.db_manager.get_all_test_names()
-            ref_values = self.main_window.db_manager.get_test_reference_values()
+            test_names = self.main_window.lis_provider.get_all_test_names()
+            ref_values = self.main_window.lis_provider.get_test_reference_values()
 
             for test_name in test_names:
                 saved_settings[test_name] = {
@@ -434,7 +434,8 @@ class SettingsTab(QWidget):
         dialog = TestSettingsDialog(
             self.main_window.db_manager,
             saved_settings,
-            self
+            self,
+            lis_provider=self.main_window.lis_provider  # ← передаём провайдер
         )
 
         if dialog.exec() == TestSettingsDialog.Accepted:
@@ -514,11 +515,17 @@ class SettingsTab(QWidget):
 
     def get_settings(self) -> Settings:
         """Получение текущих настроек"""
+        # Берём db_path из существующих настроек, если есть
+        current_db_path = "criticat.db"
+        if hasattr(self.main_window, 'settings') and self.main_window.settings:
+            current_db_path = self.main_window.settings.db_path or "criticat.db"
+
         return Settings(
-            db_path=self.main_window.settings.db_path if hasattr(self.main_window, 'settings') else "testbase",
+            db_path=current_db_path,
             check_interval=self.interval_spin.value(),
             threshold_percent=0,
-            monitored_tests=self.main_window.settings.monitored_tests if hasattr(self.main_window, 'settings') else []
+            monitored_tests=self.main_window.settings.monitored_tests
+            if hasattr(self.main_window, 'settings') else []
         )
 
     def get_server_settings(self) -> dict:

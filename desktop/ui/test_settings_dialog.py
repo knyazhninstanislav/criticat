@@ -7,13 +7,15 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
 
 
+
 class TestSettingsDialog(QDialog):
     """Диалог настройки проверяемых тестов"""
     settings_saved = Signal(dict)
 
-    def __init__(self, db_manager, current_settings: dict, parent=None):
+    def __init__(self, db_manager, current_settings: dict, parent=None, lis_provider=None):
         super().__init__(parent)
         self.db_manager = db_manager
+        self.lis_provider = lis_provider
         self.current_settings = current_settings or {}
         self.test_settings = {}
         self.init_ui()
@@ -222,8 +224,13 @@ class TestSettingsDialog(QDialog):
             QMessageBox.warning(self, "Предупреждение", "Нет подключения к БД")
             return
 
-        test_names = self.db_manager.get_all_test_names()
-        ref_values = self.db_manager.get_test_reference_values()
+        if self.lis_provider:
+            test_names = self.lis_provider.get_all_test_names()
+            ref_values = self.lis_provider.get_test_reference_values()
+        else:
+            # fallback — если провайдер не передан
+            test_names = []
+            ref_values = {}
 
         print(f"Загружено тестов: {len(test_names)}")
         print(f"Сохраненные настройки: {self.current_settings}")
@@ -495,7 +502,10 @@ class TestSettingsDialog(QDialog):
         if reply != QMessageBox.Yes:
             return
 
-        ref_values = self.db_manager.get_test_reference_values()
+        if self.lis_provider:
+            ref_values = self.lis_provider.get_test_reference_values()
+        else:
+            ref_values = {}
 
         for test_name, widgets in self.test_settings.items():
             ref_data = ref_values.get(test_name, {})

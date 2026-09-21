@@ -1,48 +1,79 @@
+# main.py
 import sys
-import os
 from PySide6.QtWidgets import QApplication, QMessageBox
-from PySide6.QtCore import Qt, QTimer, QSettings
-from PySide6.QtGui import QIcon, QPalette, QColor
+from PySide6.QtCore import QTimer, QSettings
+
 from ui.main_window import MainWindow
-from splash_screen import CritiCatSplashScreen, SplashController
-from themes import ThemeController
+from desktop.ui.splash_screen import SplashController
+from desktop.ui.themes import ThemeController
 from database import DatabaseManager
+from lis.factory import LisProviderFactory
 
 
 def main():
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
 
-    # Создаем контроллер тем
+    # ===== ТЕМА =====
     theme_controller = ThemeController(app)
-
-    # Загружаем сохраненную тему
     app_settings = QSettings('CritiCat', 'LabMonitor')
     saved_theme = app_settings.value('theme', 'light')
     theme_controller.apply_theme(saved_theme)
 
-    # Показываем сплэш-скрин
+    # ===== СПЛЭШ =====
     splash_controller = SplashController()
     splash = splash_controller.show(duration_ms=5000)
 
-    # Инициализация БД
+    # ===== СВОЯ БД =====
     db_manager = DatabaseManager()
 
-    # Имитируем загрузку
+    # ===== ПРОВАЙДЕР ЛИС =====
+    lis_provider_type = app_settings.value('lis_provider', 'mock')
+    lis_db_path = app_settings.value('lis_db_path', 'mock_lis.db')
+
+    try:
+        lis_provider = LisProviderFactory.create(
+            provider_type=lis_provider_type,
+            db_path=lis_db_path
+        )
+    except Exception as e:
+        QMessageBox.critical(None, "Ошибка", f"Не удалось создать провайдер ЛИС: {e}")
+        splash_controller.close()
+        sys.exit(1)
+
+    # ===== ИНИЦИАЛИЗАЦИЯ =====
     def initialize_app():
         try:
+            # 1. Своя БД
             if not db_manager.connect():
-                QMessageBox.critical(None, "Ошибка", "Не удалось подключиться к базе данных")
+                QMessageBox.critical(None, "Ошибка",
+                                     "Не удалось подключиться к базе данных CritiCat")
                 splash_controller.close()
                 sys.exit(1)
 
-            # Создаем главное окно с передачей theme_controller и app_settings
-            window = MainWindow(theme_controller=theme_controller, app_settings=app_settings)
+            # 2. ЛИС
+            if not lis_provider.connect():
+                QMessageBox.critical(None, "Ошибка",
+                                     "Не удалось подключиться к ЛИС")
+                splash_controller.close()
+                sys.exit(1)
 
-            # Закрываем сплэш-скрин
+            # 3. Сиды для мока
+            if lis_provider_type == 'mock':
+                try:
+                    lis_provider.seed_demo_data()
+                except Exception as e:
+                    print(f"Не удалось залить сиды: {e}")
+
+            # 4. Главное окно — ПЕРЕДАЁМ провайдер!
+            window = MainWindow(
+                theme_controller=theme_controller,
+                app_settings=app_settings,
+                db_manager=db_manager,
+                lis_provider=lis_provider        # ← КЛЮЧЕВАЯ СТРОКА
+            )
+
             splash_controller.close()
-
-            # Показываем главное окно
             window.show()
 
         except Exception as e:
@@ -50,7 +81,6 @@ def main():
             splash_controller.close()
             sys.exit(1)
 
-    # Запускаем инициализацию после задержки
     QTimer.singleShot(2000, initialize_app)
 
     sys.exit(app.exec())

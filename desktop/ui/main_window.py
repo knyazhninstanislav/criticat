@@ -1,6 +1,10 @@
+# main_window.py
+from typing import List, Dict
+
 from PySide6.QtWidgets import (QMainWindow, QTabWidget, QStatusBar,
                                QMessageBox, QVBoxLayout, QWidget, QPushButton)
 from PySide6.QtCore import Qt, QTimer
+
 from ui.vds_admin_tab import VdsAdminTab
 from ui.monitor_tab import MonitorTab
 from ui.settings_tab import SettingsTab
@@ -10,14 +14,17 @@ from worker import CheckWorker
 from database import DatabaseManager
 from models import Settings
 from server_client import ServerClient
-
+from lis.base import LisProvider
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, theme_controller=None, app_settings=None):
+    def __init__(self, theme_controller=None, app_settings=None,
+                 db_manager=None, lis_provider=None):
         super().__init__()
+
         self.settings = Settings()
-        self.db_manager = DatabaseManager()
+        self.db_manager = db_manager or DatabaseManager()
+        self.lis_provider = lis_provider  # ЛИС-провайдер
         self.check_worker = None
         self.timer = None
         self.excluded_ids = set()
@@ -32,13 +39,9 @@ class MainWindow(QMainWindow):
             'poll_interval': 30
         }
 
-        # Регистрируем callback
         self.server_client.register_callback(self._on_server_confirmation)
-
-        # Управление диалогами
         self.current_alert_dialog = None
 
-        # Темы
         self.theme_controller = theme_controller
         self.app_settings = app_settings
 
@@ -58,7 +61,6 @@ class MainWindow(QMainWindow):
         self.history_tab = HistoryTab(self)
         self.settings_tab = SettingsTab(self)
         self.audit_tab = AuditTab(self)
-
         self.vds_admin_tab = VdsAdminTab(self)
 
         self.tab_widget.addTab(self.monitor_tab, "🔍 Мониторинг")
@@ -83,16 +85,13 @@ class MainWindow(QMainWindow):
     # ========== VDS СЕРВЕР ==========
 
     def _on_server_confirmation(self, confirmations):
-        """Обработка подтверждений с VDS"""
         for confirmation in confirmations:
-            # Проверяем, что confirmation - словарь
             if not isinstance(confirmation, dict):
                 self.log_message(f"Неожиданный формат: {type(confirmation)}")
                 continue
 
             ids = confirmation.get('ids')
             test_name = confirmation.get('test_name')
-            result_key = confirmation.get('result_key')
 
             if ids and test_name:
                 self.log_message(f"✅ Подтверждено с VDS: IDS={ids}, {test_name}")
@@ -106,7 +105,7 @@ class MainWindow(QMainWindow):
         try:
             cursor = self.db_manager.connection.cursor()
             cursor.execute("""
-                SELECT result_id FROM critical_results_history 
+                SELECT result_id FROM critical_results_history
                 WHERE ids = ? AND test_name = ? AND is_ignored = 0
                 ORDER BY found_at DESC LIMIT 1
             """, (ids, test_name))
@@ -122,8 +121,8 @@ class MainWindow(QMainWindow):
                                f"ids={ids}, test={test_name}")
         except Exception as e:
             self.log_message(f"   Ошибка: {e}")
+
     def _update_vds_tab_state(self):
-        """Обновление состояния вкладки VDS в зависимости от подключения"""
         if not hasattr(self, 'vds_admin_tab'):
             return
 
@@ -137,7 +136,6 @@ class MainWindow(QMainWindow):
 
         self.vds_admin_tab.set_connected(connected, message)
 
-        # Блокируем/разблокируем вкладку
         idx = self.tab_widget.indexOf(self.vds_admin_tab)
         if idx >= 0:
             self.tab_widget.setTabEnabled(idx, connected)
@@ -175,7 +173,6 @@ class MainWindow(QMainWindow):
                 if not api_key:
                     self.log_message("⚠️ API ключ не указан")
 
-            # Обновляем состояние админ-вкладки
             self._update_vds_tab_state()
         except Exception as e:
             self.log_message(f"❌ Ошибка: {e}")
@@ -210,6 +207,7 @@ class MainWindow(QMainWindow):
                            "server", "", str(e))
             return False
 
+    # ========== ТЕМА ==========
 
     def _update_theme_button_text(self):
         if self._get_current_theme() == 'dark':
@@ -221,7 +219,7 @@ class MainWindow(QMainWindow):
         if self.theme_controller:
             try:
                 return self.theme_controller.get_current_theme()
-            except:
+            except Exception:
                 pass
         return 'light'
 
@@ -235,6 +233,8 @@ class MainWindow(QMainWindow):
                 self.log_message(f"Тема: {'темная' if new_theme == 'dark' else 'светлая'}")
             except Exception as e:
                 self.log_message(f"Ошибка темы: {e}")
+
+    # ========== ВКЛАДКИ ==========
 
     def _on_tab_changed(self, index):
         widget = self.tab_widget.widget(index)
@@ -261,32 +261,31 @@ class MainWindow(QMainWindow):
     def log_message(self, message: str):
         self.monitor_tab.add_log_message(message)
 
-    def log_audit(self, action_type, action_description="", object_type="", object_id="", details=""):
+    def log_audit(self, action_type, action_description="", object_type="",
+                  object_id="", details=""):
         if self.db_manager.is_connected():
-            self.db_manager.log_audit(action_type, action_description, object_type, object_id, details)
+            self.db_manager.log_audit(action_type, action_description,
+                                      object_type, object_id, details)
+
+    # ========== НАСТРОЙКИ ==========
 
     def apply_settings(self):
         new_settings = self.settings_tab.get_settings()
         self.settings = new_settings
+
+        # Если путь к БД изменился — пересоздаём DatabaseManager
+        if self.db_manager.db_path != self.settings.db_path:
+            self.db_manager.disconnect()
+            self.db_manager = DatabaseManager(self.settings.db_path)
+
         self.db_manager.disconnect()
         if self.db_manager.connect():
             self.status_bar.showMessage("✓ Подключено к БД")
-            self.log_message("Соединение с БД установлено")
+            self.log_message(f"Соединение с БД: {self.db_manager.db_path}")
             self.log_audit("db_connect", "Подключение к БД", "database", "",
-                           f"path={self.settings.db_path}")
+                           f"path={self.db_manager.db_path}")  # ← теперь правильный путь
             self.test_settings = self.db_manager.load_test_settings()
-            monitored_tests = [n for n, c in self.test_settings.items() if c.get('monitored')]
-            self.settings.monitored_tests = monitored_tests
-            self.excluded_ids = set(self.db_manager.get_ignored_ids())
-            self.monitor_tab.update_excluded_count(len(self.excluded_ids))
-            if monitored_tests:
-                self.log_message(f"Мониторируемых тестов: {len(monitored_tests)}")
-        else:
-            self.status_bar.showMessage("✗ Ошибка подключения к БД")
-            self.log_message("Ошибка подключения к БД")
-            self.log_audit("error", "Ошибка подключения к БД", "database", "",
-                           str(self.settings.db_path))
-        self.restart_check_timer()
+            ...
 
     def restart_check_timer(self):
         if self.timer:
@@ -296,6 +295,8 @@ class MainWindow(QMainWindow):
         self.timer.start(self.settings.check_interval * 60 * 1000)
         self.log_message(f"Таймер: {self.settings.check_interval} мин")
 
+    # ========== ПРОВЕРКА ==========
+
     def start_check(self):
         if self.is_checking:
             return
@@ -303,6 +304,9 @@ class MainWindow(QMainWindow):
             return
         if not self.settings.monitored_tests:
             self.log_message("Нет тестов для мониторинга")
+            return
+        if not self.lis_provider:
+            self.log_message("❌ Провайдер ЛИС не настроен")
             return
 
         self.is_checking = True
@@ -314,9 +318,9 @@ class MainWindow(QMainWindow):
         self.test_settings = self.db_manager.load_test_settings()
 
         self.check_worker = CheckWorker(
-            self.settings.db_path,
+            self.lis_provider,
+            self.db_manager,
             self.settings.monitored_tests,
-            0,
             list(self.excluded_ids),
             self.test_settings
         )
@@ -351,7 +355,7 @@ class MainWindow(QMainWindow):
                 try:
                     if r.get('id') not in self.excluded_ids:
                         filtered.append(r)
-                except:
+                except Exception:
                     filtered.append(r)
 
             if filtered:
@@ -380,7 +384,7 @@ class MainWindow(QMainWindow):
         try:
             if self.tab_widget.currentWidget() == self.history_tab:
                 self.history_tab.refresh_data()
-        except:
+        except Exception:
             pass
 
     def show_alerts_dialog(self, results):
@@ -404,7 +408,7 @@ class MainWindow(QMainWindow):
         if self.current_alert_dialog and self.current_alert_dialog.isVisible():
             try:
                 self.current_alert_dialog.finished.disconnect(self._on_alert_dialog_finished)
-            except:
+            except Exception:
                 pass
             self.current_alert_dialog.reject()
             self.current_alert_dialog = None
@@ -418,8 +422,9 @@ class MainWindow(QMainWindow):
         if self.timer:
             self.timer.stop()
         self.db_manager.disconnect()
+        if self.lis_provider:
+            self.lis_provider.disconnect()
         event.accept()
-
 
     def _prepare_results_for_server(self, results: List[Dict]) -> List[Dict]:
         """Подготовка результатов для отправки на VDS"""

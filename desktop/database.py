@@ -1,3 +1,4 @@
+# database.py
 import sqlite3
 import os
 import sys
@@ -6,9 +7,21 @@ from typing import List, Dict, Any, Optional, Tuple
 
 
 class DatabaseManager:
-    def __init__(self, db_path: str = "testbase"):
+    """
+    Управляет ТОЛЬКО своими данными CritiCat:
+    - critical_results_history  (история критических результатов)
+    - audit_log                 (журнал аудита)
+    - test_settings             (настройки мониторинга тестов)
+    - consent_records           (согласия)
+
+    НЕ работает с ЛИС! За чтение из ЛИС отвечает LisProvider (папка lis/).
+    """
+
+    def __init__(self, db_path: str = "criticat.db"):
         self.db_path = db_path
         self.connection = None
+
+    # ==================== СОЕДИНЕНИЕ ====================
 
     def connect(self) -> bool:
         """Установка соединения с БД"""
@@ -18,7 +31,10 @@ class DatabaseManager:
             if not db_dir:
                 if hasattr(sys, 'frozen'):
                     import tempfile
-                    app_data_dir = os.path.join(os.environ.get('APPDATA', tempfile.gettempdir()), 'CritiCat')
+                    app_data_dir = os.path.join(
+                        os.environ.get('APPDATA', tempfile.gettempdir()),
+                        'CritiCat'
+                    )
                 else:
                     app_data_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -33,11 +49,17 @@ class DatabaseManager:
                     with open(test_file, 'w') as f:
                         f.write('test')
                     os.remove(test_file)
-                except:
+                except Exception:
                     import tempfile
-                    app_data_dir = os.path.join(os.environ.get('APPDATA', tempfile.gettempdir()), 'CritiCat')
+                    app_data_dir = os.path.join(
+                        os.environ.get('APPDATA', tempfile.gettempdir()),
+                        'CritiCat'
+                    )
                     os.makedirs(app_data_dir, exist_ok=True)
-                    self.db_path = os.path.join(app_data_dir, os.path.basename(self.db_path))
+                    self.db_path = os.path.join(
+                        app_data_dir,
+                        os.path.basename(self.db_path)
+                    )
 
             self.connection = sqlite3.connect(
                 self.db_path,
@@ -55,23 +77,32 @@ class DatabaseManager:
             print(f"Ошибка подключения к БД: {e}")
             return False
 
+    def disconnect(self):
+        """Закрытие соединения"""
+        if self.connection:
+            try:
+                self.connection.close()
+            except Exception:
+                pass
+            self.connection = None
+
+    def is_connected(self) -> bool:
+        """Проверка соединения"""
+        if self.connection:
+            try:
+                self.connection.execute("SELECT 1")
+                return True
+            except Exception:
+                return False
+        return False
+
+    # ==================== СОЗДАНИЕ ТАБЛИЦ ====================
+
     def _create_tables(self):
-        """Создание необходимых таблиц"""
+        """Создание необходимых таблиц (только свои данные!)"""
         cursor = self.connection.cursor()
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS laboratory_results (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ids INTEGER NOT NULL,
-                full_name TEXT NOT NULL,
-                department TEXT NOT NULL,
-                test_name TEXT NOT NULL,
-                result_value REAL,
-                ref_upper REAL,
-                ref_lower REAL
-            )
-        """)
-
+        # История критических результатов
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS critical_results_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,10 +118,12 @@ class DatabaseManager:
                 found_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 is_ignored BOOLEAN DEFAULT 0,
                 ignored_at TIMESTAMP,
+                sent_to_server BOOLEAN DEFAULT 0,
                 UNIQUE(result_id)
             )
         """)
 
+        # Журнал аудита
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,6 +139,7 @@ class DatabaseManager:
             )
         """)
 
+        # Согласия
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS consent_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -117,29 +151,18 @@ class DatabaseManager:
             )
         """)
 
+        # Настройки тестов (с типом мониторинга)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS test_settings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 test_name TEXT NOT NULL UNIQUE,
                 monitored BOOLEAN DEFAULT 0,
+                monitor_type TEXT DEFAULT 'both',
                 ref_lower REAL,
                 ref_upper REAL,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-
-        # Таблица настроек тестов с типом мониторинга
-        cursor.execute("""
-               CREATE TABLE IF NOT EXISTS test_settings (
-                   id INTEGER PRIMARY KEY AUTOINCREMENT,
-                   test_name TEXT NOT NULL UNIQUE,
-                   monitored BOOLEAN DEFAULT 0,
-                   monitor_type TEXT DEFAULT 'both',
-                   ref_lower REAL,
-                   ref_upper REAL,
-                   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-               )
-           """)
 
         self.connection.commit()
 
@@ -148,126 +171,44 @@ class DatabaseManager:
         try:
             cursor = self.connection.cursor()
 
-            # Проверяем наличие колонки monitor_type
+            # Проверяем наличие колонки monitor_type в test_settings
             cursor.execute("PRAGMA table_info(test_settings)")
             columns = [col[1] for col in cursor.fetchall()]
 
             if 'monitor_type' not in columns:
-                cursor.execute("ALTER TABLE test_settings ADD COLUMN monitor_type TEXT DEFAULT 'both'")
+                cursor.execute(
+                    "ALTER TABLE test_settings "
+                    "ADD COLUMN monitor_type TEXT DEFAULT 'both'"
+                )
                 self.connection.commit()
                 print("Добавлена колонка monitor_type в test_settings")
+
+            # Проверяем наличие колонки sent_to_server в critical_results_history
+            cursor.execute("PRAGMA table_info(critical_results_history)")
+            columns = [col[1] for col in cursor.fetchall()]
+
+            if 'sent_to_server' not in columns:
+                cursor.execute(
+                    "ALTER TABLE critical_results_history "
+                    "ADD COLUMN sent_to_server BOOLEAN DEFAULT 0"
+                )
+                self.connection.commit()
+                print("Добавлена колонка sent_to_server в critical_results_history")
 
         except Exception as e:
             print(f"Ошибка при миграции БД: {e}")
 
-    def _seed_test_data(self):
-        """Заполнение тестовыми данными"""
-        departments_data = [
-            ('Терапевтическое отделение', [
-                (1001, 'Иванов Иван Иванович', 'Гемоглобин', 185, 160, 120),
-                (1001, 'Иванов Иван Иванович', 'Лейкоциты', 12.5, 9.0, 4.0),
-                (1002, 'Петрова Мария Сергеевна', 'Глюкоза', 7.8, 6.1, 3.5),
-                (1002, 'Петрова Мария Сергеевна', 'Гемоглобин', 110, 160, 120),
-                (1003, 'Сидоров Алексей Петрович', 'СОЭ', 25, 15, 1),
-                (1003, 'Сидоров Алексей Петрович', 'Креатинин', 130, 110, 60),
-            ]),
-            ('Хирургическое отделение', [
-                (2001, 'Кузнецова Анна Владимировна', 'Гемоглобин', 95, 160, 120),
-                (2001, 'Кузнецова Анна Владимировна', 'Лейкоциты', 15.2, 9.0, 4.0),
-                (2002, 'Смирнов Дмитрий Александрович', 'Тромбоциты', 450, 400, 180),
-                (2002, 'Смирнов Дмитрий Александрович', 'Билирубин', 25, 21, 5),
-            ]),
-            ('Кардиологическое отделение', [
-                (3001, 'Козлов Михаил Юрьевич', 'Холестерин', 7.2, 5.2, 3.5),
-                (3001, 'Козлов Михаил Юрьевич', 'Триглицериды', 2.5, 2.0, 0.5),
-                (3002, 'Новикова Ольга Павловна', 'ЛПНП', 4.8, 3.5, 1.5),
-                (3002, 'Новикова Ольга Павловна', 'ЛПВП', 0.8, 2.0, 1.0),
-            ]),
-            ('Неврологическое отделение', [
-                (4001, 'Соколова Татьяна Игоревна', 'Глюкоза', 3.0, 6.1, 3.5),
-                (4001, 'Соколова Татьяна Игоревна', 'Натрий', 155, 145, 135),
-                (4002, 'Лебедев Андрей Владимирович', 'Калий', 6.0, 5.5, 3.5),
-            ]),
-        ]
-
-        cursor = self.connection.cursor()
-        for department, patients in departments_data:
-            for ids, full_name, test_name, result_value, ref_upper, ref_lower in patients:
-                cursor.execute("""
-                    INSERT INTO laboratory_results 
-                    (ids, full_name, department, test_name, result_value, ref_upper, ref_lower)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (ids, full_name, department, test_name, result_value, ref_upper, ref_lower))
-
-        self.connection.commit()
-        print("Тестовые данные добавлены")
-
-    def disconnect(self):
-        """Закрытие соединения"""
-        if self.connection:
-            try:
-                self.connection.close()
-            except:
-                pass
-            self.connection = None
-
-    def is_connected(self) -> bool:
-        """Проверка соединения"""
-        if self.connection:
-            try:
-                self.connection.execute("SELECT 1")
-                return True
-            except:
-                return False
-        return False
-
-    def get_all_test_names(self) -> List[str]:
-        """Получение списка всех уникальных названий тестов"""
-        if not self.connection:
-            return []
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("SELECT DISTINCT test_name FROM laboratory_results ORDER BY test_name")
-            return [row['test_name'] for row in cursor.fetchall()]
-        except Exception as e:
-            print(f"Ошибка получения списка тестов: {e}")
-            return []
-
-    def get_test_reference_values(self) -> Dict[str, Dict[str, float]]:
-        """Получение референсных значений для всех тестов"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("""
-                SELECT test_name, 
-                       MIN(ref_lower) as min_lower, 
-                       MAX(ref_upper) as max_upper
-                FROM laboratory_results
-                WHERE ref_lower IS NOT NULL AND ref_upper IS NOT NULL
-                GROUP BY test_name
-            """)
-            result = {}
-            for row in cursor.fetchall():
-                result[row['test_name']] = {
-                    'ref_lower': row['min_lower'] or 0,
-                    'ref_upper': row['max_upper'] or 0
-                }
-            return result
-        except Exception as e:
-            print(f"Ошибка получения референсных значений: {e}")
-            return {}
+    # ==================== НАСТРОЙКИ ТЕСТОВ ====================
 
     def save_test_settings(self, settings: dict) -> bool:
         """Сохранение настроек тестов"""
         try:
             cursor = self.connection.cursor()
-
-            # Очищаем старые настройки
             cursor.execute("DELETE FROM test_settings")
 
-            # Сохраняем новые
             for test_name, config in settings.items():
                 cursor.execute("""
-                    INSERT OR REPLACE INTO test_settings 
+                    INSERT OR REPLACE INTO test_settings
                     (test_name, monitored, monitor_type, ref_lower, ref_upper, updated_at)
                     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """, (
@@ -311,7 +252,7 @@ class DatabaseManager:
         try:
             cursor = self.connection.cursor()
             cursor.execute("""
-                SELECT test_name FROM test_settings 
+                SELECT test_name FROM test_settings
                 WHERE monitored = 1
                 ORDER BY test_name
             """)
@@ -320,146 +261,15 @@ class DatabaseManager:
             print(f"Ошибка получения мониторируемых тестов: {e}")
             return []
 
-    def get_pathological_results(self, test_names: List[str],
-                                 threshold_percent: float,
-                                 excluded_ids: List[int]) -> List[Dict[str, Any]]:
-        """Поиск патологических результатов"""
-        if not self.connection or not test_names:
-            return []
+    # ==================== КРИТИЧЕСКИЕ РЕЗУЛЬТАТЫ ====================
 
-        results = []
-        try:
-            cursor = self.connection.cursor()
-            placeholders = ','.join(['?' for _ in test_names])
-            query = f"""
-                SELECT * FROM laboratory_results 
-                WHERE test_name IN ({placeholders})
-                AND ref_lower IS NOT NULL 
-                AND ref_upper IS NOT NULL
-                AND result_value IS NOT NULL
-            """
-            params = test_names.copy()
-
-            if excluded_ids:
-                excluded_placeholders = ','.join(['?' for _ in excluded_ids])
-                query += f" AND id NOT IN ({excluded_placeholders})"
-                params.extend(excluded_ids)
-
-            cursor.execute(query, params)
-
-            for row in cursor.fetchall():
-                result_dict = dict(row)
-                result_value = result_dict['result_value']
-                ref_lower = result_dict['ref_lower']
-                ref_upper = result_dict['ref_upper']
-
-                if threshold_percent > 0:
-                    lower_threshold = ref_lower * (1 - threshold_percent / 100)
-                    upper_threshold = ref_upper * (1 + threshold_percent / 100)
-                else:
-                    lower_threshold = ref_lower
-                    upper_threshold = ref_upper
-
-                if result_value < lower_threshold or result_value > upper_threshold:
-                    if result_value > ref_upper:
-                        deviation = ((result_value - ref_upper) / ref_upper) * 100
-                    else:
-                        deviation = ((ref_lower - result_value) / ref_lower) * 100
-                    result_dict['deviation_percent'] = round(deviation, 2)
-                    results.append(result_dict)
-        except Exception as e:
-            print(f"Ошибка при поиске: {e}")
-            raise
-        return results
-
-    def get_pathological_results_with_settings(self, test_names: List[str],
-                                               threshold_percent: float,
-                                               excluded_ids: List[int],
-                                               test_settings: dict = None) -> List[Dict[str, Any]]:
-        """Поиск патологических результатов с индивидуальными настройками"""
-        if not self.connection or not test_names:
-            return []
-
-        results = []
-        test_settings = test_settings or {}
-
-        try:
-            cursor = self.connection.cursor()
-            placeholders = ','.join(['?' for _ in test_names])
-            query = f"""
-                SELECT * FROM laboratory_results 
-                WHERE test_name IN ({placeholders})
-                AND ref_lower IS NOT NULL 
-                AND ref_upper IS NOT NULL
-                AND result_value IS NOT NULL
-            """
-            params = test_names.copy()
-
-            if excluded_ids:
-                excluded_placeholders = ','.join(['?' for _ in excluded_ids])
-                query += f" AND id NOT IN ({excluded_placeholders})"
-                params.extend(excluded_ids)
-
-            cursor.execute(query, params)
-
-            for row in cursor.fetchall():
-                result_dict = dict(row)
-                result_value = result_dict['result_value']
-                test_name = result_dict['test_name']
-
-                # Получаем настройки для теста
-                settings = test_settings.get(test_name, {})
-                monitor_type = settings.get('monitor_type', 'both')
-                ref_lower = settings.get('ref_lower', result_dict['ref_lower'])
-                ref_upper = settings.get('ref_upper', result_dict['ref_upper'])
-
-                # Применяем процент отклонения
-                if threshold_percent > 0:
-                    lower_threshold = ref_lower * (1 - threshold_percent / 100)
-                    upper_threshold = ref_upper * (1 + threshold_percent / 100)
-                else:
-                    lower_threshold = ref_lower
-                    upper_threshold = ref_upper
-
-                # Проверяем в зависимости от типа мониторинга
-                is_critical = False
-
-                if monitor_type == 'lower':
-                    # Только нижний порог
-                    if result_value < lower_threshold:
-                        is_critical = True
-                        deviation = ((ref_lower - result_value) / ref_lower) * 100
-                elif monitor_type == 'upper':
-                    # Только верхний порог
-                    if result_value > upper_threshold:
-                        is_critical = True
-                        deviation = ((result_value - ref_upper) / ref_upper) * 100
-                else:  # both
-                    # Оба порога
-                    if result_value < lower_threshold:
-                        is_critical = True
-                        deviation = ((ref_lower - result_value) / ref_lower) * 100
-                    elif result_value > upper_threshold:
-                        is_critical = True
-                        deviation = ((result_value - ref_upper) / ref_upper) * 100
-
-                if is_critical:
-                    result_dict['deviation_percent'] = round(deviation, 2)
-                    result_dict['monitor_type'] = monitor_type
-                    results.append(result_dict)
-
-        except Exception as e:
-            print(f"Ошибка при поиске: {e}")
-            raise
-
-        return results
     def save_critical_result(self, result: Dict[str, Any]) -> bool:
         """Сохранение критического результата в историю"""
         try:
             cursor = self.connection.cursor()
             cursor.execute("""
-                INSERT OR IGNORE INTO critical_results_history 
-                (result_id, full_name, ids, department, test_name, result_value, 
+                INSERT OR IGNORE INTO critical_results_history
+                (result_id, full_name, ids, department, test_name, result_value,
                  ref_lower, ref_upper, deviation_percent, found_at, is_ignored)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0)
             """, (
@@ -493,13 +303,13 @@ class DatabaseManager:
             cursor = self.connection.cursor()
             if is_ignored:
                 cursor.execute("""
-                    UPDATE critical_results_history 
+                    UPDATE critical_results_history
                     SET is_ignored = 1, ignored_at = CURRENT_TIMESTAMP
                     WHERE result_id = ?
                 """, (result_id,))
             else:
                 cursor.execute("""
-                    UPDATE critical_results_history 
+                    UPDATE critical_results_history
                     SET is_ignored = 0, ignored_at = NULL
                     WHERE result_id = ?
                 """, (result_id,))
@@ -517,12 +327,16 @@ class DatabaseManager:
                 updated_count += 1
         return updated_count
 
-    def get_all_critical_results(self, show_ignored: bool = True,
-                                 show_active: bool = True) -> List[Dict[str, Any]]:
+    def get_all_critical_results(
+        self,
+        show_ignored: bool = True,
+        show_active: bool = True
+    ) -> List[Dict[str, Any]]:
         """Получение всех критических результатов"""
         try:
             cursor = self.connection.cursor()
             conditions = []
+
             if show_ignored and not show_active:
                 conditions.append("is_ignored = 1")
             elif show_active and not show_ignored:
@@ -543,7 +357,9 @@ class DatabaseManager:
         """Получение ID игнорируемых результатов"""
         try:
             cursor = self.connection.cursor()
-            cursor.execute("SELECT result_id FROM critical_results_history WHERE is_ignored = 1")
+            cursor.execute(
+                "SELECT result_id FROM critical_results_history WHERE is_ignored = 1"
+            )
             return [row['result_id'] for row in cursor.fetchall()]
         except Exception as e:
             print(f"Ошибка получения ID: {e}")
@@ -553,23 +369,67 @@ class DatabaseManager:
         """Получение статистики"""
         try:
             cursor = self.connection.cursor()
+
             cursor.execute("SELECT COUNT(*) as total FROM critical_results_history")
             total = cursor.fetchone()['total']
-            cursor.execute("SELECT COUNT(*) as ignored FROM critical_results_history WHERE is_ignored = 1")
+
+            cursor.execute(
+                "SELECT COUNT(*) as ignored FROM critical_results_history "
+                "WHERE is_ignored = 1"
+            )
             ignored = cursor.fetchone()['ignored']
+
             return {'total': total, 'ignored': ignored, 'active': total - ignored}
         except Exception as e:
             print(f"Ошибка получения статистики: {e}")
             return {'total': 0, 'ignored': 0, 'active': 0}
 
-    def log_audit(self, action_type: str, action_description: str = "",
-                  object_type: str = "", object_id: str = "",
-                  details: str = "", user: str = "system") -> bool:
+    # ==================== ОТПРАВКА НА VDS ====================
+
+    def is_result_sent_to_server(self, ids: int, test_name: str, result_value: float) -> bool:
+        """Проверка, отправлен ли результат на VDS"""
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM critical_results_history
+                WHERE ids = ? AND test_name = ? AND result_value = ?
+                AND sent_to_server = 1
+            """, (ids, test_name, result_value))
+            row = cursor.fetchone()
+            return row['count'] > 0 if row else False
+        except Exception:
+            return False
+
+    def mark_as_sent_to_server(self, result_id: int) -> bool:
+        """Пометка результата как отправленного на VDS"""
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("""
+                UPDATE critical_results_history
+                SET sent_to_server = 1
+                WHERE result_id = ?
+            """, (result_id,))
+            self.connection.commit()
+            return True
+        except Exception:
+            return False
+
+    # ==================== АУДИТ ====================
+
+    def log_audit(
+        self,
+        action_type: str,
+        action_description: str = "",
+        object_type: str = "",
+        object_id: str = "",
+        details: str = "",
+        user: str = "system"
+    ) -> bool:
         """Запись в аудит"""
         try:
             cursor = self.connection.cursor()
             cursor.execute("""
-                INSERT INTO audit_log 
+                INSERT INTO audit_log
                 (timestamp, user, action_type, action_description, object_type, object_id, details)
                 VALUES (CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?)
             """, (user, action_type, action_description, object_type, object_id, details))
@@ -583,7 +443,10 @@ class DatabaseManager:
         """Получение журнала аудита"""
         try:
             cursor = self.connection.cursor()
-            cursor.execute("SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT ?", (limit,))
+            cursor.execute(
+                "SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT ?",
+                (limit,)
+            )
             return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             print(f"Ошибка получения аудита: {e}")
@@ -609,32 +472,4 @@ class DatabaseManager:
             return True
         except Exception as e:
             print(f"Ошибка очистки аудита: {e}")
-            return False
-
-    def is_result_sent_to_server(self, ids: int, test_name: str, result_value: float) -> bool:
-        """Проверка, отправлен ли результат на VDS"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("""
-                SELECT COUNT(*) as count FROM critical_results_history 
-                WHERE ids = ? AND test_name = ? AND result_value = ?
-                AND sent_to_server = 1
-            """, (ids, test_name, result_value))
-            row = cursor.fetchone()
-            return row['count'] > 0 if row else False
-        except:
-            return False
-
-    def mark_as_sent_to_server(self, result_id: int):
-        """Пометка результата как отправленного на VDS"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("""
-                UPDATE critical_results_history 
-                SET sent_to_server = 1 
-                WHERE result_id = ?
-            """, (result_id,))
-            self.connection.commit()
-            return True
-        except:
             return False
