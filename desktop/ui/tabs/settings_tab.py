@@ -516,9 +516,9 @@ class SettingsTab(QWidget):
     def get_settings(self) -> Settings:
         """Получение текущих настроек"""
         # Берём db_path из существующих настроек, если есть
-        current_db_path = "criticat.db"
+        current_db_path = "../desktop/db/criticat.db"
         if hasattr(self.main_window, 'settings') and self.main_window.settings:
-            current_db_path = self.main_window.settings.db_path or "criticat.db"
+            current_db_path = self.main_window.settings.db_path or "../desktop/db/criticat.db"
 
         return Settings(
             db_path=current_db_path,

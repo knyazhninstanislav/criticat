@@ -12,7 +12,7 @@ class MockLisProvider(LisProvider):
     Это твоя текущая 'моковая БД ЛИС' — заглушка для разработки.
     """
 
-    def __init__(self, db_path: str = "mock_lis.db"):
+    def __init__(self, db_path: str = "db\mock_lis.db"):
         self.db_path = db_path
         self.connection = None
 

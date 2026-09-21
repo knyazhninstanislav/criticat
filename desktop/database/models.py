@@ -4,7 +4,7 @@ from typing import List, Optional
 
 @dataclass
 class Settings:
-    db_path: str = "../db/criticat.db"
+    db_path: str = "../desktop/db/criticat.db"
     check_interval: int = 5  # минуты
     threshold_percent: float = 0  # Больше не используется
     monitored_tests: List[str] = None

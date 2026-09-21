@@ -29,7 +29,7 @@ def main():
 
     # ===== ПРОВАЙДЕР ЛИС =====
     lis_provider_type = app_settings.value('lis_provider', 'mock')
-    lis_db_path = app_settings.value('lis_db_path', 'mock_lis.db')
+    lis_db_path = app_settings.value('lis_db_path', 'db\mock_lis.db')
 
     try:
         lis_provider = LisProviderFactory.create(

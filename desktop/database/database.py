@@ -17,7 +17,7 @@ class DatabaseManager:
     НЕ работает с ЛИС! За чтение из ЛИС отвечает LisProvider (папка lis/).
     """
 
-    def __init__(self, db_path: str = "criticat.db"):
+    def __init__(self, db_path: str = "../desktop/db/criticat.db"):
         self.db_path = db_path
         self.connection = None
 
