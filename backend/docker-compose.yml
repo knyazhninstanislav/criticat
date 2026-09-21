@@ -96,7 +96,6 @@ services:
     restart: unless-stopped
     command: sh -c "sleep 10 && python -m app.workers"
     environment:
-      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:-}
       - DATABASE_URL=sqlite:////app/data/criticat.db
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       # RabbitMQ
