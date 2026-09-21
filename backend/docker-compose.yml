@@ -129,43 +129,6 @@ services:
     networks:
       - criticat-network
 
-  # Telegram Poller
-  telegram_poller:
-    build: .
-    container_name: criticat-telegram-poller
-    restart: unless-stopped
-    command: sh -c "sleep 15 && python -m app.telegram_poller"
-    environment:
-      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:-}
-      - DATABASE_URL=sqlite:////app/data/criticat.db
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      # RabbitMQ
-      - RABBITMQ_HOST=rabbitmq
-      - RABBITMQ_PORT=5672
-      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
-      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
-      - RABBITMQ_VHOST=${RABBITMQ_VHOST:-/}
-    volumes:
-      - ./app:/app/app:rw
-      - ./data:/app/data:rw
-      - ./logs:/app/logs:rw
-    user: "0:0"
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      app:
-        condition: service_healthy
-      worker:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8081/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    networks:
-      - criticat-network
-
 networks:
   criticat-network:
     driver: bridge
