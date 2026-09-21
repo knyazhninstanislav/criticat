@@ -1,12 +1,12 @@
 # result_service.py
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 
 from .database import (
-    AnonymizedResult, TelegramUser, NotificationLog,
+    AnonymizedResult, MobileUser, NotificationLog,
     get_db_session, get_result_by_key, get_result_by_id
 )
 from .models import ResultStatus
@@ -26,7 +26,6 @@ class ResultService:
             self.db.close()
 
     def create_result(self, data: Dict[str, Any]) -> AnonymizedResult:
-        """Создание нового результата"""
         result_key = str(uuid.uuid4())
 
         result = AnonymizedResult(
@@ -52,13 +51,11 @@ class ResultService:
         return result
 
     def get_pending_results(self) -> List[AnonymizedResult]:
-        """Получение ожидающих результатов"""
         return self.db.query(AnonymizedResult).filter(
             AnonymizedResult.status == ResultStatus.PENDING.value
         ).all()
 
     def get_pending_grouped(self) -> Dict[str, List[AnonymizedResult]]:
-        """Группировка ожидающих результатов по IDS и отделению"""
         pending = self.get_pending_results()
         grouped = {}
         for r in pending:
@@ -68,63 +65,53 @@ class ResultService:
             grouped[key].append(r)
         return grouped
 
-    def mark_as_sent(self, result_id: int, chat_id: str, message_id: str) -> bool:
-        """Пометка результата как отправленного"""
+    def mark_as_sent(self, result_id: int, user_id: str, message_id: str) -> bool:
         result = get_result_by_id(self.db, result_id)
         if result:
             result.status = ResultStatus.SENT.value
-            result.telegram_chat_id = chat_id
-            result.telegram_message_id = message_id
+            result.mobile_user_id = user_id
+            result.push_message_id = message_id
             result.updated_at = datetime.utcnow()
             self.db.commit()
             return True
         return False
 
-    def mark_as_confirmed(self, result_id: int, chat_id: str) -> bool:
-        """Пометка результата как подтвержденного"""
+    def mark_as_confirmed(self, result_id: int, user_id: str) -> bool:
         result = get_result_by_id(self.db, result_id)
         if result:
             result.status = ResultStatus.CONFIRMED.value
             result.confirmed_at = datetime.utcnow()
-            result.confirmed_by = chat_id
+            result.confirmed_by = user_id
             result.updated_at = datetime.utcnow()
             self.db.commit()
-
-            # Логируем
-            self._add_log(result_id, result.result_key, chat_id, 'confirmed')
+            self._add_log(result_id, result.result_key, user_id, 'confirmed')
             return True
         return False
 
-    def mark_as_rejected(self, result_id: int, chat_id: str, reason: str = None) -> bool:
-        """Пометка результата как отклоненного"""
+    def mark_as_rejected(self, result_id: int, user_id: str, reason: str = None) -> bool:
         result = get_result_by_id(self.db, result_id)
         if result:
             result.status = ResultStatus.REJECTED.value
             result.confirmed_at = datetime.utcnow()
-            result.confirmed_by = chat_id
+            result.confirmed_by = user_id
             result.rejection_reason = reason
             result.updated_at = datetime.utcnow()
             self.db.commit()
-
-            # Логируем
-            self._add_log(result_id, result.result_key, chat_id, 'rejected', reason)
+            self._add_log(result_id, result.result_key, user_id, 'rejected', reason)
             return True
         return False
 
     def mark_as_expired(self, result_id: int) -> bool:
-        """Пометка результата как просроченного"""
         result = get_result_by_id(self.db, result_id)
         if result:
             result.status = ResultStatus.EXPIRED.value
             result.updated_at = datetime.utcnow()
             self.db.commit()
-
             self._add_log(result_id, result.result_key, None, 'expired')
             return True
         return False
 
     def mark_as_acknowledged(self, result_key: str) -> bool:
-        """Пометка результата как подтвержденного десктопом"""
         result = get_result_by_key(self.db, result_key)
         if result:
             result.acknowledged = True
@@ -134,14 +121,12 @@ class ResultService:
         return False
 
     def get_confirmed_results(self) -> List[AnonymizedResult]:
-        """Получение подтвержденных результатов"""
         return self.db.query(AnonymizedResult).filter(
             AnonymizedResult.status == ResultStatus.CONFIRMED.value,
             AnonymizedResult.acknowledged == False
         ).all()
 
     def delete_result(self, result_key: str) -> bool:
-        """Удаление результата"""
         try:
             self.db.query(NotificationLog).filter(
                 NotificationLog.result_key == result_key
@@ -159,25 +144,22 @@ class ResultService:
             logger.error(f"Error deleting result: {e}")
             return False
 
-    def get_active_users(self) -> List[TelegramUser]:
-        """Получение активных пользователей"""
-        return self.db.query(TelegramUser).filter(
-            TelegramUser.is_active == True
+    def get_active_users(self) -> List[MobileUser]:
+        return self.db.query(MobileUser).filter(
+            MobileUser.is_active == True
         ).all()
 
-    def get_user_by_chat_id(self, chat_id: str) -> Optional[TelegramUser]:
-        """Получение пользователя по chat_id"""
-        return self.db.query(TelegramUser).filter(
-            TelegramUser.chat_id == chat_id
+    def get_user_by_user_id(self, user_id: str) -> Optional[MobileUser]:
+        return self.db.query(MobileUser).filter(
+            MobileUser.user_id == user_id
         ).first()
 
-    def _add_log(self, result_id: int, result_key: str, chat_id: str,
+    def _add_log(self, result_id: int, result_key: str, user_id: str,
                  action: str, details: str = None):
-        """Добавление лога"""
         log = NotificationLog(
             result_id=result_id,
             result_key=result_key,
-            chat_id=chat_id,
+            user_id=user_id,
             action=action,
             details=details,
         )
@@ -185,7 +167,6 @@ class ResultService:
         self.db.commit()
 
     def get_statistics(self) -> Dict[str, Any]:
-        """Получение статистики"""
         total = self.db.query(AnonymizedResult).count()
         pending = self.db.query(AnonymizedResult).filter(
             AnonymizedResult.status == ResultStatus.PENDING.value
@@ -206,9 +187,9 @@ class ResultService:
             AnonymizedResult.acknowledged == True
         ).count()
 
-        total_users = self.db.query(TelegramUser).count()
-        active_users = self.db.query(TelegramUser).filter(
-            TelegramUser.is_active == True
+        total_users = self.db.query(MobileUser).count()
+        active_users = self.db.query(MobileUser).filter(
+            MobileUser.is_active == True
         ).count()
 
         return {

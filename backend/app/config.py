@@ -1,4 +1,4 @@
-# config.py
+# app/config.py
 import os
 
 
@@ -6,9 +6,6 @@ class Settings:
     """Настройки приложения"""
 
     def __init__(self):
-        # Telegram
-        self.telegram_token: str = os.environ.get('TELEGRAM_TOKEN', '')
-
         # База данных
         self.database_url: str = os.environ.get('DATABASE_URL', 'sqlite:///data/criticat.db')
 
@@ -27,7 +24,6 @@ class Settings:
 
         # Очереди
         self.queue_incoming: str = 'lab.critical.results'
-        self.queue_telegram: str = 'alert.telegram.queue'
         self.queue_app: str = 'alert.app.queue'
         self.queue_pending: str = 'pending.confirmation.queue'
         self.queue_response: str = 'user.response.queue'
