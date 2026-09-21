@@ -63,6 +63,16 @@ class AuditTab(QWidget):
         self.action_type_combo.addItem("Подтверждение из Telegram", "telegram_accept")
         self.action_type_combo.addItem("Применение настроек", "settings_apply")
         self.action_type_combo.addItem("Ошибка", "error")
+
+        self.action_type_combo.addItem("VDS: обновление админки", "vds_refresh")
+        self.action_type_combo.addItem("VDS: загрузка пользователей", "vds_users_load")
+        self.action_type_combo.addItem("VDS: загрузка статистики", "vds_stats_load")
+        self.action_type_combo.addItem("VDS: сохранение пользователя", "vds_user_save")
+        self.action_type_combo.addItem("VDS: активация пользователя", "vds_user_activate")
+        self.action_type_combo.addItem("VDS: деактивация пользователя", "vds_user_deactivate")
+        self.action_type_combo.addItem("VDS: удаление пользователя", "vds_user_delete")
+        self.action_type_combo.addItem("VDS: ошибка", "vds_error")
+
         self.action_type_combo.setStyleSheet("""
             QComboBox {
                 padding: 5px 10px;
@@ -356,10 +366,15 @@ class AuditTab(QWidget):
             action_item.setTextAlignment(Qt.AlignCenter)
 
             # Цвет действия
-            if action_type in ['error', 'ignored', 'batch_ignore']:
+            if action_type in ['error', 'vds_error', 'ignored', 'batch_ignore']:
                 action_item.setForeground(QColor("#d32f2f"))
-            elif action_type in ['save_result', 'save_results_batch', 'check_start']:
+            elif action_type in ['save_result', 'save_results_batch', 'check_start',
+                                 'vds_user_save', 'vds_user_activate']:
                 action_item.setForeground(QColor("#1976d2"))
+            elif action_type in ['vds_user_delete', 'vds_user_deactivate']:
+                action_item.setForeground(QColor("#e65100"))
+            elif action_type.startswith('vds_'):
+                action_item.setForeground(QColor("#9b59b6"))
             elif action_type in ['telegram_send', 'telegram_accept']:
                 action_item.setForeground(QColor("#9b59b6"))
             else:
@@ -424,7 +439,15 @@ class AuditTab(QWidget):
             'telegram_send': 'Отправка в Telegram',
             'telegram_accept': 'Подтверждение из Telegram',
             'settings_apply': 'Применение настроек',
-            'error': 'Ошибка'
+            'error': 'Ошибка',
+            'vds_refresh': 'VDS: обновление админки',
+            'vds_users_load': 'VDS: загрузка пользователей',
+            'vds_stats_load': 'VDS: загрузка статистики',
+            'vds_user_save': 'VDS: сохранение пользователя',
+            'vds_user_activate': 'VDS: активация пользователя',
+            'vds_user_deactivate': 'VDS: деактивация пользователя',
+            'vds_user_delete': 'VDS: удаление пользователя',
+            'vds_error': 'VDS: ошибка',
         }
         return actions.get(action_type, action_type)
 

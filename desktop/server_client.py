@@ -248,6 +248,111 @@ class ServerClient:
             'skipped_count': skipped_count,
             'failed_count': failed_count,
         }
+    # ========== ПОЛЬЗОВАТЕЛИ ==========
+
+    def get_users(self) -> List[Dict]:
+        """Получение списка всех пользователей"""
+        if not self.is_configured():
+            return []
+        try:
+            response = self.session.get(
+                f"{self.server_url}/api/v1/users",
+                timeout=15
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if isinstance(data, dict):
+                    return data.get('users', [])
+                if isinstance(data, list):
+                    return data
+            elif response.status_code == 401:
+                self._auth_verified = False
+            return []
+        except Exception as e:
+            logger.error(f"get_users error: {e}")
+            return []
+
+    def add_user(self, chat_id: str) -> Dict:
+        """Добавление пользователя (упрощённый)"""
+        return self.add_user_full({'chat_id': chat_id})
+
+    def add_user_full(self, payload: Dict) -> Dict:
+        """Добавление/обновление пользователя (полный payload)"""
+        if not self.is_configured():
+            return {'success': False, 'message': 'Сервер не настроен'}
+        try:
+            response = self.session.post(
+                f"{self.server_url}/api/v1/users",
+                json=payload,
+                timeout=15
+            )
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 401:
+                self._auth_verified = False
+                return {'success': False, 'message': 'Неверный API ключ'}
+            return {'success': False, 'message': f'HTTP {response.status_code}'}
+        except Exception as e:
+            return {'success': False, 'message': str(e)}
+
+    def delete_user(self, chat_id: str) -> Dict:
+        """Удаление (деактивация) пользователя"""
+        if not self.is_configured():
+            return {'success': False, 'message': 'Сервер не настроен'}
+        try:
+            response = self.session.delete(
+                f"{self.server_url}/api/v1/users/{chat_id}",
+                timeout=15
+            )
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 401:
+                self._auth_verified = False
+                return {'success': False, 'message': 'Неверный API ключ'}
+            return {'success': False, 'message': f'HTTP {response.status_code}'}
+        except Exception as e:
+            return {'success': False, 'message': str(e)}
+
+    def update_user(self, chat_id: str, payload: Dict) -> Dict:
+        """Обновление пользователя"""
+        if not self.is_configured():
+            return {'success': False, 'message': 'Сервер не настроен'}
+        try:
+            response = self.session.put(
+                f"{self.server_url}/api/v1/users/{chat_id}",
+                json=payload,
+                timeout=15
+            )
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 401:
+                self._auth_verified = False
+                return {'success': False, 'message': 'Неверный API ключ'}
+            return {'success': False, 'message': f'HTTP {response.status_code}'}
+        except Exception as e:
+            return {'success': False, 'message': str(e)}
+
+    # ========== СТАТИСТИКА ==========
+
+    def get_statistics(self) -> Dict:
+        """Получение статистики"""
+        if not self.is_configured():
+            return {}
+        try:
+            response = self.session.get(
+                f"{self.server_url}/api/v1/statistics",
+                timeout=15
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if isinstance(data, dict):
+                    return data.get('statistics', {})
+            elif response.status_code == 401:
+                self._auth_verified = False
+            return {}
+        except Exception as e:
+            logger.error(f"get_statistics error: {e}")
+            return {}
 
     def get_pending_confirmations(self) -> List[Dict]:
         """Получение подтверждений (с проверкой авторизации)"""

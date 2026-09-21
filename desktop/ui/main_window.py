@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import (QMainWindow, QTabWidget, QStatusBar,
                                QMessageBox, QVBoxLayout, QWidget, QPushButton)
 from PySide6.QtCore import Qt, QTimer
+from ui.vds_admin_tab import VdsAdminTab
 from ui.monitor_tab import MonitorTab
 from ui.settings_tab import SettingsTab
 from ui.history_tab import HistoryTab
@@ -58,11 +59,14 @@ class MainWindow(QMainWindow):
         self.settings_tab = SettingsTab(self)
         self.audit_tab = AuditTab(self)
 
+        self.vds_admin_tab = VdsAdminTab(self)
+
         self.tab_widget.addTab(self.monitor_tab, "🔍 Мониторинг")
         self.tab_widget.addTab(self.history_tab, "📋 История")
         self.tab_widget.addTab(self.settings_tab, "⚙️ Настройки")
         self.tab_widget.addTab(self.audit_tab, "🔐 Аудит")
-
+        self.tab_widget.addTab(self.vds_admin_tab, "🖥️ VDS")
+        self._update_vds_tab_state()
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
         self.history_tab.ignore_toggled.connect(self._on_ignore_toggled)
 
@@ -118,6 +122,25 @@ class MainWindow(QMainWindow):
                                f"ids={ids}, test={test_name}")
         except Exception as e:
             self.log_message(f"   Ошибка: {e}")
+    def _update_vds_tab_state(self):
+        """Обновление состояния вкладки VDS в зависимости от подключения"""
+        if not hasattr(self, 'vds_admin_tab'):
+            return
+
+        connected = False
+        message = ""
+        try:
+            if self.server_settings.get('enabled') and self.server_client.is_configured():
+                connected, message = self.server_client.verify_auth()
+        except Exception:
+            connected = False
+
+        self.vds_admin_tab.set_connected(connected, message)
+
+        # Блокируем/разблокируем вкладку
+        idx = self.tab_widget.indexOf(self.vds_admin_tab)
+        if idx >= 0:
+            self.tab_widget.setTabEnabled(idx, connected)
 
     def save_server_settings(self):
         try:
@@ -151,6 +174,9 @@ class MainWindow(QMainWindow):
                 self.server_client.stop_polling()
                 if not api_key:
                     self.log_message("⚠️ API ключ не указан")
+
+            # Обновляем состояние админ-вкладки
+            self._update_vds_tab_state()
         except Exception as e:
             self.log_message(f"❌ Ошибка: {e}")
             self.log_audit("error", "Ошибка сохранения настроек VDS",
@@ -216,6 +242,10 @@ class MainWindow(QMainWindow):
             self.history_tab.refresh_data()
         elif widget == self.audit_tab:
             self.audit_tab.refresh_data()
+        elif widget == self.vds_admin_tab:
+            self._update_vds_tab_state()
+            if self.tab_widget.isTabEnabled(index):
+                self.vds_admin_tab.refresh_all()
 
     def _on_ignore_toggled(self, result_id, is_ignored):
         if is_ignored:
