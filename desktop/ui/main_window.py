@@ -1,12 +1,9 @@
-from typing import List, Dict
-
 from PySide6.QtWidgets import (QMainWindow, QTabWidget, QStatusBar,
                                QMessageBox, QVBoxLayout, QWidget, QPushButton)
 from PySide6.QtCore import Qt, QTimer
 from ui.monitor_tab import MonitorTab
 from ui.settings_tab import SettingsTab
 from ui.history_tab import HistoryTab
-from ui.telegram_tab import TelegramTab
 from ui.audit_tab import AuditTab
 from worker import CheckWorker
 from database import DatabaseManager
@@ -58,13 +55,11 @@ class MainWindow(QMainWindow):
         self.tab_widget = QTabWidget()
         self.monitor_tab = MonitorTab(self)
         self.history_tab = HistoryTab(self)
-        self.telegram_tab = TelegramTab(self)
         self.settings_tab = SettingsTab(self)
         self.audit_tab = AuditTab(self)
 
         self.tab_widget.addTab(self.monitor_tab, "🔍 Мониторинг")
         self.tab_widget.addTab(self.history_tab, "📋 История")
-        self.tab_widget.addTab(self.telegram_tab, "📱 Уведомления")
         self.tab_widget.addTab(self.settings_tab, "⚙️ Настройки")
         self.tab_widget.addTab(self.audit_tab, "🔐 Аудит")
 
@@ -126,10 +121,10 @@ class MainWindow(QMainWindow):
 
     def save_server_settings(self):
         try:
-            url = self.telegram_tab.server_url_input.text().strip()
-            api_key = self.telegram_tab.api_key_input.text().strip()
-            enabled = self.telegram_tab.server_enabled_cb.isChecked()
-            interval = self.telegram_tab.poll_interval_spin.value()
+            url = self.settings_tab.server_url_input.text().strip()
+            api_key = self.settings_tab.api_key_input.text().strip()
+            enabled = self.settings_tab.server_enabled_cb.isChecked()
+            interval = self.settings_tab.poll_interval_spin.value()
 
             self.server_settings['url'] = url
             self.server_settings['api_key'] = api_key
