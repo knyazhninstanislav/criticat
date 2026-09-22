@@ -7,6 +7,9 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
 
+from .auth.routes import router as auth_router
+from .api import router as api_router
+
 from .config import settings
 from .database import init_db, engine, SessionLocal
 from .api import router
@@ -24,7 +27,6 @@ async def rabbitmq_keepalive():
     while True:
         try:
             await asyncio.sleep(10)
-
             if not rabbitmq_client.is_connected():
                 logger.warning("RabbitMQ connection lost, reconnecting...")
                 await rabbitmq_client.connect()
@@ -42,17 +44,14 @@ async def lifespan(app: FastAPI):
     logger.info("Инициализация CritiCat Server...")
     logger.info("=" * 50)
 
-    # Инициализация БД
     init_db()
 
-    # Подключение к RabbitMQ (с retry)
     connected = await rabbitmq_client.ensure_connected(max_wait=30)
     if not connected:
         logger.error("❌ Could not connect to RabbitMQ after 30s, will keep trying...")
     else:
         logger.info("✅ RabbitMQ connected")
 
-    # Запускаем фоновую задачу для keepalive
     keepalive_task = asyncio.create_task(rabbitmq_keepalive())
 
     logger.info("=" * 50)
@@ -61,7 +60,6 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown
     logger.info("Shutting down...")
     keepalive_task.cancel()
     try:
@@ -88,6 +86,8 @@ app.add_middleware(
 )
 
 app.include_router(router, prefix="/api/v1")
+app.include_router(auth_router, prefix="/api/v1")
+app.include_router(api_router, prefix="/api/v1")
 
 
 def _check_database() -> bool:
@@ -122,10 +122,7 @@ async def root():
 
 @app.get("/health")
 async def health_check(response: Response):
-    """
-    Healthcheck — возвращает 503 если RabbitMQ или БД недоступны.
-    Это заставляет Docker/K8s перезапускать контейнер.
-    """
+    """Healthcheck — 503 если RabbitMQ или БД недоступны."""
     db_ok = _check_database()
     rabbitmq_ok = rabbitmq_client.is_connected()
 

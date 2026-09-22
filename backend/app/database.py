@@ -7,7 +7,7 @@ import os
 import logging
 import sqlite3
 
-from .config import settings
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -46,17 +46,42 @@ class AnonymizedResult(Base):
 
 
 class MobileUser(Base):
-    """Пользователь мобильного приложения"""
+    """Пользователь мобильного приложения / веба"""
     __tablename__ = "mobile_users"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String, unique=True, index=True)   # внутренний ID
+    user_id = Column(String, unique=True, index=True)
     username = Column(String, nullable=True)
     full_name = Column(String, nullable=True)
     department = Column(String, nullable=True)
+    password_hash = Column(String, nullable=True)
+    role = Column(String, default='doctor')  # doctor/admin
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     last_notification_at = Column(DateTime, nullable=True)
+
+
+class UserSession(Base):
+    """Сессия пользователя (refresh-токены)"""
+    __tablename__ = "user_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True, nullable=False)
+    access_jti = Column(String, unique=True, index=True, nullable=False)
+    refresh_token_hash = Column(String, unique=True, index=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    revoked_at = Column(DateTime, nullable=True)
+    is_revoked = Column(Boolean, default=False, index=True)
+    user_agent = Column(String, nullable=True)
+    ip_address = Column(String, nullable=True)
+
+    __table_args__ = (
+        Index('idx_session_user_revoked', 'user_id', 'is_revoked'),
+        # ← НОВОЕ: индекс для cleanup и reuse detection
+        Index('idx_session_revoked_at', 'is_revoked', 'revoked_at'),
+        Index('idx_session_expires_at', 'expires_at'),
+    )
 
 
 class NotificationLog(Base):
@@ -103,7 +128,7 @@ def ensure_db_writable():
 
 
 def migrate_database():
-    """Миграция БД: переименование TG-таблиц в mobile_users"""
+    """Миграция БД"""
     db_path = get_db_path()
     if not db_path or not os.path.exists(db_path):
         return
@@ -112,24 +137,21 @@ def migrate_database():
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
-        # Проверяем, есть ли старая таблица telegram_users
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='telegram_users'")
+        # mobile_users
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='mobile_users'")
         if cursor.fetchone():
-            logger.info("Найдена старая таблица telegram_users, мигрируем...")
-            # Переименовываем таблицу
-            cursor.execute("ALTER TABLE telegram_users RENAME TO mobile_users")
-            # Переименовываем колонки
             cursor.execute("PRAGMA table_info(mobile_users)")
             columns = [col[1] for col in cursor.fetchall()]
-            if 'chat_id' in columns:
-                # SQLite не поддерживает RENAME COLUMN до 3.25, но обычно поддерживает
-                try:
-                    cursor.execute("ALTER TABLE mobile_users RENAME COLUMN chat_id TO user_id")
-                    logger.info("Переименована колонка chat_id → user_id")
-                except Exception as e:
-                    logger.warning(f"Не удалось переименовать chat_id: {e}")
 
-        # Проверяем колонки anonymized_results
+            if 'password_hash' not in columns:
+                cursor.execute("ALTER TABLE mobile_users ADD COLUMN password_hash TEXT")
+                logger.info("Добавлена колонка password_hash в mobile_users")
+
+            if 'role' not in columns:
+                cursor.execute("ALTER TABLE mobile_users ADD COLUMN role TEXT DEFAULT 'doctor'")
+                logger.info("Добавлена колонка role в mobile_users")
+
+        # anonymized_results
         cursor.execute("PRAGMA table_info(anonymized_results)")
         columns = [col[1] for col in cursor.fetchall()]
 
@@ -139,19 +161,19 @@ def migrate_database():
         if 'attempts_count' not in columns:
             cursor.execute("ALTER TABLE anonymized_results ADD COLUMN attempts_count INTEGER DEFAULT 0")
 
-        if 'telegram_chat_id' in columns:
-            try:
-                cursor.execute("ALTER TABLE anonymized_results RENAME COLUMN telegram_chat_id TO mobile_user_id")
-                logger.info("Переименована колонка telegram_chat_id → mobile_user_id")
-            except Exception as e:
-                logger.warning(f"Не удалось переименовать telegram_chat_id: {e}")
+        # user_sessions
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_sessions'")
+        if cursor.fetchone():
+            cursor.execute("PRAGMA table_info(user_sessions)")
+            columns = [col[1] for col in cursor.fetchall()]
 
-        if 'telegram_message_id' in columns:
-            try:
-                cursor.execute("ALTER TABLE anonymized_results RENAME COLUMN telegram_message_id TO push_message_id")
-                logger.info("Переименована колонка telegram_message_id → push_message_id")
-            except Exception as e:
-                logger.warning(f"Не удалось переименовать telegram_message_id: {e}")
+            if 'revoked_at' not in columns:
+                cursor.execute("ALTER TABLE user_sessions ADD COLUMN revoked_at DATETIME")
+                logger.info("Добавлена колонка revoked_at в user_sessions")
+
+            if 'is_revoked' not in columns:
+                cursor.execute("ALTER TABLE user_sessions ADD COLUMN is_revoked INTEGER DEFAULT 0")
+                logger.info("Добавлена колонка is_revoked в user_sessions")
 
         conn.commit()
         conn.close()
