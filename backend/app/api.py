@@ -39,9 +39,14 @@ async def verify_auth(api_key_valid: bool = Depends(verify_api_key)):
 
 @router.post("/results", response_model=dict)
 async def receive_result(data: dict, api_key_valid: bool = Depends(verify_api_key)):
+    """
+    ← ИЗМЕНЕНО: приём результата + планирование отложенного обзвона.
+    """
     try:
         service = ResultService()
-        result = service.create_result(data)
+
+        # ← ИЗМЕНЕНО: используем create_result_with_escalation
+        result = await service.create_result_with_escalation(data)
 
         result_data = {
             'result_id': result.id,
@@ -113,6 +118,7 @@ async def get_all_results(api_key_valid: bool = Depends(verify_api_key)):
                 'test_name': r.test_name,
                 'result_value': r.result_value,
                 'status': r.status,
+                'escalated_to_voice': bool(r.escalated_to_voice),  # ← НОВОЕ
                 'created_at': r.created_at.isoformat() if r.created_at else None,
             })
         return {'success': True, 'results': result_list}

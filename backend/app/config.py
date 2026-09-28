@@ -17,7 +17,6 @@ class Settings:
         self.api_key: str = os.environ.get('API_KEY', 'default-secret-key')
 
         # ===== JWT =====
-        # ← ИЗМЕНЕНО: не генерируем случайный секрет в проде
         env = os.environ.get('ENV', 'development').lower()
         jwt_secret = os.environ.get('JWT_SECRET')
         if not jwt_secret:
@@ -33,14 +32,11 @@ class Settings:
         self.jwt_secret: str = jwt_secret
         self.jwt_algorithm: str = 'HS256'
         self.jwt_issuer: str = 'criticat'
-        self.jwt_audience: str = 'criticat-api'  # ← НОВОЕ
+        self.jwt_audience: str = 'criticat-api'
         self.jwt_access_ttl_minutes: int = int(os.environ.get('JWT_ACCESS_TTL_MINUTES', 5))
         self.jwt_refresh_ttl_days: int = int(os.environ.get('JWT_REFRESH_TTL_DAYS', 30))
 
-        # ← НОВОЕ: pepper для refresh-токенов (доп. защита при утечке БД)
         self.refresh_pepper: str = os.environ.get('REFRESH_PEPPER', '')
-
-        # ← НОВОЕ: сколько дней хранить revoked-сессии (для reuse detection)
         self.revoked_session_keep_days: int = int(
             os.environ.get('REVOKED_SESSION_KEEP_DAYS', 7)
         )
@@ -65,6 +61,14 @@ class Settings:
         self.queue_retry_delay: str = 'retry.delay.queue'
         self.queue_failed: str = 'failed.alerts.queue'
 
+        # ← НОВОЕ: Voice-очереди
+        self.queue_voice_calls: str = 'voice.calls.queue'
+        self.queue_voice_failed: str = 'voice.failed.queue'
+        self.queue_voice_escalation_delay: str = 'voice.escalation.delay'
+        self.routing_voice_call: str = 'voice.call'
+        self.routing_voice_failed: str = 'voice.failed'
+        self.routing_voice_escalation_schedule: str = 'voice.escalation.schedule'
+
         # Exchanges
         self.exchange_main: str = 'lab.exchange'
         self.exchange_dlx: str = 'lab.dlx.exchange'
@@ -74,6 +78,20 @@ class Settings:
         self.retry_delay: int = int(os.environ.get('RETRY_DELAY', 300000))
         self.max_retries: int = int(os.environ.get('MAX_RETRIES', 3))
         self.pending_timeout_hours: int = int(os.environ.get('PENDING_TIMEOUT_HOURS', 24))
+
+        # ← НОВОЕ: Настройки эскалации на обзвон
+        # Через сколько минут после создания результата запускать обзвон
+        self.voice_escalation_minutes: int = int(
+            os.environ.get('VOICE_ESCALATION_MINUTES', 15)
+        )
+        # TTL для voice.calls.queue (5 минут — если voice-service лежит, сообщение сгорит)
+        self.voice_call_ttl_ms: int = int(
+            os.environ.get('VOICE_CALL_TTL_MS', 300000)
+        )
+        # Включена ли эскалация в обзвон вообще
+        self.voice_escalation_enabled: bool = (
+            os.environ.get('VOICE_ESCALATION_ENABLED', 'true').lower() == 'true'
+        )
 
 
 settings = Settings()

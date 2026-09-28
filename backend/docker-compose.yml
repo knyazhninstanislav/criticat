@@ -128,6 +128,47 @@ services:
     networks:
       - criticat-network
 
+  voice-service:
+    build: ./voice_service
+    container_name: criticat-voice
+    environment:
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
+      - TWILIO_FROM_NUMBER=${TWILIO_FROM_NUMBER}
+      - VOICE_PUBLIC_URL=${VOICE_PUBLIC_URL}
+      - TTS_PROVIDER=${TTS_PROVIDER:-twilio}
+      - YANDEX_TTS_API_KEY=${YANDEX_TTS_API_KEY}
+      - YANDEX_TTS_FOLDER_ID=${YANDEX_TTS_FOLDER_ID}
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - RABBITMQ_VHOST=/
+      - VOICE_DB_URL=sqlite:///data/voice.db
+      - VOICE_ESCALATION_MINUTES=${VOICE_ESCALATION_MINUTES:-15}
+      - QUIET_HOURS_START=${QUIET_HOURS_START:-22}
+      - QUIET_HOURS_END=${QUIET_HOURS_END:-7}
+      - VOICE_MAX_ATTEMPTS=${VOICE_MAX_ATTEMPTS:-3}
+      - VOICE_CALL_TIMEOUT=${VOICE_CALL_TIMEOUT:-30}
+      - VOICE_TEST_NUMBER=${VOICE_TEST_NUMBER}
+      - VOICE_API_KEY=${VOICE_API_KEY}
+      - ENV=${ENV:-development}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - voice_data:/app/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+    networks:
+      - criticat-network
+
+  volumes:
+    voice_data:
+
+
 networks:
   criticat-network:
     driver: bridge

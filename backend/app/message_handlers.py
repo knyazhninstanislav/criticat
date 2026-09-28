@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class MessageHandlers:
-    """Обработчики сообщений из RabbitMQ (без Telegram)"""
+    """Обработчики сообщений из RabbitMQ"""
 
     def __init__(self):
         self._sent_messages = set()
@@ -38,10 +38,7 @@ class MessageHandlers:
                 'attempts': 0
             }
 
-            # Отправляем в очередь мобильного приложения
             await rabbitmq_client.publish('alert.app', result_data)
-
-            # Отправляем в очередь ожидания подтверждения
             await rabbitmq_client.publish('pending.confirmation', result_data)
 
             service.close()
@@ -52,15 +49,7 @@ class MessageHandlers:
             raise
 
     async def handle_alert_app(self, body: Dict[str, Any], message):
-        """
-        Обработка алерта для мобильного приложения.
-
-        Логика:
-        - Если нет активных получателей → failed, ACK
-        - Если push-сервис недоступен (timeout) → НЕ ACK → retry
-        - Если пользователь деактивирован → ACK
-        - Если отправлено хотя бы одному → ACK
-        """
+        """Обработка алерта для мобильного приложения."""
         result_key = body.get('result_key')
         ids = body.get('ids')
         department = body.get('department')
@@ -86,10 +75,7 @@ class MessageHandlers:
                     skipped_count += 1
                     continue
 
-                # TODO: здесь будет отправка push через FCM
-                # Пока просто логируем
                 try:
-                    # Заглушка: push отправлен успешно
                     message_id = f"push-{result_key}-{user.user_id}"
 
                     sent_count += 1
@@ -125,7 +111,7 @@ class MessageHandlers:
             service.close()
 
     async def handle_user_response(self, body: Dict[str, Any], message):
-        """Обработка ответа от пользователя (из мобильного приложения)"""
+        """Обработка ответа от пользователя"""
         try:
             result_id = body.get('result_id')
             result_key = body.get('result_key')
@@ -215,4 +201,34 @@ class MessageHandlers:
 
         except Exception as e:
             logger.error(f"Error handling pending timeout: {e}")
+            raise
+
+    async def handle_voice_failed(self, body: Dict[str, Any], message):
+        """
+        ← НОВОЕ: Обработка неудачных звонков из voice.failed.queue.
+        Логируем для аудита и потенциальных алертов админу.
+        """
+        try:
+            result_key = body.get('result_key')
+            reason = body.get('failure_reason', 'unknown')
+            failed_at = body.get('failed_at', datetime.utcnow().isoformat())
+
+            logger.warning(
+                f"Voice call failed: result_key={result_key}, "
+                f"reason={reason}, at={failed_at}"
+            )
+
+            # Пишем в лог
+            service = ResultService()
+            service._add_log(
+                result_id=body.get('result_id'),
+                result_key=result_key,
+                user_id=None,
+                action='voice_failed',
+                details=f"reason={reason}",
+            )
+            service.close()
+
+        except Exception as e:
+            logger.error(f"Error handling voice failed: {e}")
             raise
