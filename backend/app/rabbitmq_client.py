@@ -79,7 +79,7 @@ class RabbitMQClient:
                 logger.error(f"Failed to restore consumer for {queue_name}: {e}")
 
     async def _setup_queues_and_exchanges(self):
-        """Настройка очередей и обменников (без Telegram)"""
+        """Настройка очередей и обменников"""
         logger.info("Setting up queues and exchanges...")
 
         main_exchange = await self.channel.declare_exchange(
@@ -168,7 +168,49 @@ class RabbitMQClient:
         )
         await failed_queue.bind(dlx_exchange, 'failed.app')
 
-        logger.info("✅ All queues and exchanges configured")
+        # ==================== ← НОВОЕ: VOICE ОЧЕРЕДИ ====================
+
+        # 9. Voice calls — сюда voice-service слушает и звонит
+        voice_calls_queue = await self.channel.declare_queue(
+            settings.queue_voice_calls,
+            durable=True,
+            arguments={
+                'x-queue-type': 'quorum',
+                # Если voice-service лежит дольше 5 минут — сообщение сгорит
+                'x-message-ttl': settings.voice_call_ttl_ms,
+                'x-dead-letter-exchange': settings.exchange_dlx,
+                'x-dead-letter-routing-key': 'voice.failed',
+            }
+        )
+        await voice_calls_queue.bind(main_exchange, settings.routing_voice_call)
+
+        # 10. Voice failed — сюда падают неудачные звонки
+        voice_failed_queue = await self.channel.declare_queue(
+            settings.queue_voice_failed,
+            durable=True,
+            arguments={'x-queue-type': 'classic'}
+        )
+        await voice_failed_queue.bind(dlx_exchange, settings.routing_voice_failed)
+
+        # 11. Voice escalation delay — отложенная очередь на 15 минут
+        # Когда сообщение "созреет" — оно уйдёт в voice.calls.queue через DLX
+        escalation_ttl_ms = settings.voice_escalation_minutes * 60 * 1000
+        escalation_queue = await self.channel.declare_queue(
+            settings.queue_voice_escalation_delay,
+            durable=True,
+            arguments={
+                'x-queue-type': 'classic',
+                'x-message-ttl': escalation_ttl_ms,   # 15 минут
+                'x-dead-letter-exchange': settings.exchange_main,
+                'x-dead-letter-routing-key': settings.routing_voice_call,
+            }
+        )
+        await escalation_queue.bind(
+            main_exchange,
+            settings.routing_voice_escalation_schedule
+        )
+
+        logger.info("✅ All queues and exchanges configured (including voice)")
 
     async def publish(
             self,

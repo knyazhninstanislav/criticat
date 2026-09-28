@@ -26,6 +26,7 @@ class ResultService:
             self.db.close()
 
     def create_result(self, data: Dict[str, Any]) -> AnonymizedResult:
+        """Базовое создание результата (без эскалации)."""
         result_key = str(uuid.uuid4())
 
         result = AnonymizedResult(
@@ -40,7 +41,8 @@ class ResultService:
             monitor_type=data.get('monitor_type', 'both'),
             status=ResultStatus.PENDING.value,
             acknowledged=False,
-            attempts_count=0
+            attempts_count=0,
+            escalated_to_voice=False,  # ← НОВОЕ
         )
 
         self.db.add(result)
@@ -48,6 +50,59 @@ class ResultService:
         self.db.refresh(result)
 
         logger.info(f"Created result: {result_key} (IDS: {data.get('ids')})")
+        return result
+
+    async def create_result_with_escalation(self, data: Dict[str, Any]) -> AnonymizedResult:
+        """
+        ← НОВОЕ: Создать результат и запланировать отложенный обзвон.
+
+        Через VOICE_ESCALATION_MINUTES (по умолчанию 15) сообщение
+        автоматически уйдёт из очереди voice.escalation.delay
+        в voice.calls.queue, и voice-service начнёт звонить.
+
+        Если за это время результат подтвердят — voice-service
+        проверит статус через БД и не будет звонить.
+        """
+        from .rabbitmq_client import rabbitmq_client
+        from .config import settings
+
+        # 1. Создаём результат
+        result = self.create_result(data)
+
+        # 2. Если эскалация выключена — выходим
+        if not settings.voice_escalation_enabled:
+            logger.info(f"Voice escalation disabled, skipping for {result.result_key}")
+            return result
+
+        # 3. Публикуем отложенное сообщение
+        escalation_payload = {
+            'result_id': result.id,
+            'result_key': result.result_key,
+            'ids': result.ids,
+            'department': result.department,
+            'test_name': result.test_name,
+            'result_value': result.result_value,
+            'ref_lower': result.ref_lower,
+            'ref_upper': result.ref_upper,
+            'scheduled_at': datetime.utcnow().isoformat(),
+        }
+
+        success = await rabbitmq_client.publish(
+            settings.routing_voice_escalation_schedule,
+            escalation_payload,
+        )
+
+        if success:
+            logger.info(
+                f"Запланирован обзвон для {result.result_key} "
+                f"через {settings.voice_escalation_minutes} мин."
+            )
+        else:
+            logger.warning(
+                f"Не удалось запланировать обзвон для {result.result_key} "
+                f"(RabbitMQ недоступен)"
+            )
+
         return result
 
     def get_pending_results(self) -> List[AnonymizedResult]:
@@ -120,6 +175,16 @@ class ResultService:
             return True
         return False
 
+    def mark_as_escalated_to_voice(self, result_key: str) -> bool:
+        """← НОВОЕ: пометить результат как эскалированный в обзвон."""
+        result = get_result_by_key(self.db, result_key)
+        if result:
+            result.escalated_to_voice = True
+            result.updated_at = datetime.utcnow()
+            self.db.commit()
+            return True
+        return False
+
     def get_confirmed_results(self) -> List[AnonymizedResult]:
         return self.db.query(AnonymizedResult).filter(
             AnonymizedResult.status == ResultStatus.CONFIRMED.value,
@@ -187,6 +252,11 @@ class ResultService:
             AnonymizedResult.acknowledged == True
         ).count()
 
+        # ← НОВОЕ: статистика по обзвону
+        escalated_to_voice = self.db.query(AnonymizedResult).filter(
+            AnonymizedResult.escalated_to_voice == True
+        ).count()
+
         total_users = self.db.query(MobileUser).count()
         active_users = self.db.query(MobileUser).filter(
             MobileUser.is_active == True
@@ -201,6 +271,7 @@ class ResultService:
                 'rejected': rejected,
                 'expired': expired,
                 'acknowledged': acknowledged,
+                'escalated_to_voice': escalated_to_voice,  # ← НОВОЕ
             },
             'users': {
                 'total': total_users,

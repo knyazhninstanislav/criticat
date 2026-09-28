@@ -48,7 +48,7 @@ def start_health_server(port: int = 8080):
 
 
 class ResultWorker:
-    """Worker для обработки результатов (без Telegram)"""
+    """Worker для обработки результатов"""
 
     def __init__(self):
         self.handlers = MessageHandlers()
@@ -60,6 +60,11 @@ class ResultWorker:
         logger.info("WORKER ЗАПУЩЕН")
         logger.info(f"База данных: {settings.database_url}")
         logger.info(f"RabbitMQ: {settings.rabbitmq_host}:{settings.rabbitmq_port}")
+        logger.info(
+            f"Voice escalation: "
+            f"{'включена' if settings.voice_escalation_enabled else 'выключена'}, "
+            f"через {settings.voice_escalation_minutes} мин."
+        )
         logger.info("=" * 60)
 
         init_db()
@@ -73,6 +78,7 @@ class ResultWorker:
         await asyncio.gather(
             self._process_pending_timeouts(),
             self._process_expired_confirmations(),
+            self._process_voice_failed(),   # ← НОВОЕ
         )
 
     async def _setup_consumers(self):
@@ -89,6 +95,7 @@ class ResultWorker:
             logger.info(f"Consumer started for {queue_name}")
 
     async def _process_pending_timeouts(self):
+        """Просроченные pending — через VOICE_ESCALATION_MINUTES отправляем в voice."""
         while self.running:
             try:
                 service = ResultService()
@@ -119,6 +126,7 @@ class ResultWorker:
             await asyncio.sleep(60)
 
     async def _process_expired_confirmations(self):
+        """Переотправка подтверждений, которые не дошли до десктопа."""
         while self.running:
             try:
                 service = ResultService()
@@ -147,6 +155,41 @@ class ResultWorker:
                 logger.error(f"Error processing expired confirmations: {e}", exc_info=True)
 
             await asyncio.sleep(300)
+
+    async def _process_voice_failed(self):
+        """
+        ← НОВОЕ: слушаем voice.failed.queue и логируем проблемы обзвона.
+
+        В проде здесь можно отправлять алерты админу или писать в audit_log.
+        """
+        async def handle_voice_failed(body: dict, message):
+            result_key = body.get('result_key')
+            reason = body.get('failure_reason', 'unknown')
+            logger.warning(
+                f"⚠️ Voice call failed for {result_key}: {reason}"
+            )
+
+            # Пишем в audit_log
+            try:
+                service = ResultService()
+                service._add_log(
+                    result_id=body.get('result_id'),
+                    result_key=result_key,
+                    user_id=None,
+                    action='voice_failed',
+                    details=f"reason={reason}",
+                )
+                service.close()
+            except Exception as e:
+                logger.error(f"Ошибка записи voice_failed в лог: {e}")
+
+        asyncio.create_task(
+            rabbitmq_client.consume(
+                settings.queue_voice_failed,
+                handle_voice_failed,
+            )
+        )
+        logger.info(f"Consumer started for {settings.queue_voice_failed}")
 
     def stop(self):
         self.running = False

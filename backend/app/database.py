@@ -39,9 +39,13 @@ class AnonymizedResult(Base):
     rejection_reason = Column(String, nullable=True)
     attempts_count = Column(Integer, default=0)
 
+    # ← НОВОЕ: флаг эскалации на обзвон
+    escalated_to_voice = Column(Boolean, default=False, index=True)
+
     __table_args__ = (
         Index('idx_status_acknowledged', 'status', 'acknowledged'),
         Index('idx_created_at', 'created_at'),
+        Index('idx_escalated_status', 'escalated_to_voice', 'status'),  # ← НОВОЕ
     )
 
 
@@ -78,7 +82,6 @@ class UserSession(Base):
 
     __table_args__ = (
         Index('idx_session_user_revoked', 'user_id', 'is_revoked'),
-        # ← НОВОЕ: индекс для cleanup и reuse detection
         Index('idx_session_revoked_at', 'is_revoked', 'revoked_at'),
         Index('idx_session_expires_at', 'expires_at'),
     )
@@ -160,6 +163,14 @@ def migrate_database():
 
         if 'attempts_count' not in columns:
             cursor.execute("ALTER TABLE anonymized_results ADD COLUMN attempts_count INTEGER DEFAULT 0")
+
+        # ← НОВОЕ: миграция для escalated_to_voice
+        if 'escalated_to_voice' not in columns:
+            cursor.execute(
+                "ALTER TABLE anonymized_results "
+                "ADD COLUMN escalated_to_voice INTEGER DEFAULT 0"
+            )
+            logger.info("Добавлена колонка escalated_to_voice в anonymized_results")
 
         # user_sessions
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_sessions'")
@@ -288,6 +299,17 @@ def mark_as_acknowledged(db, result_key: str):
     return False
 
 
+def mark_as_escalated_to_voice(db, result_key: str):
+    """← НОВОЕ: пометить результат как эскалированный в обзвон."""
+    result = get_result_by_key(db, result_key)
+    if result:
+        result.escalated_to_voice = True
+        result.updated_at = datetime.utcnow()
+        db.commit()
+        return True
+    return False
+
+
 def delete_result(db, result_key: str) -> bool:
     try:
         db.query(NotificationLog).filter(
@@ -384,6 +406,11 @@ def get_statistics(db) -> dict:
     expired = db.query(AnonymizedResult).filter(AnonymizedResult.status == 'expired').count()
     acknowledged = db.query(AnonymizedResult).filter(AnonymizedResult.acknowledged == True).count()
 
+    # ← НОВОЕ: количество эскалированных в обзвон
+    escalated = db.query(AnonymizedResult).filter(
+        AnonymizedResult.escalated_to_voice == True
+    ).count()
+
     return {
         'total': total,
         'pending': pending,
@@ -392,6 +419,7 @@ def get_statistics(db) -> dict:
         'rejected': rejected,
         'expired': expired,
         'acknowledged': acknowledged,
+        'escalated_to_voice': escalated,
     }
 
 
