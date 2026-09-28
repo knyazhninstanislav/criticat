@@ -1,4 +1,4 @@
-# lis/__init__.py
+# providers/__init__.py
 from .base import LisProvider, LisResult
 from .factory import LisProviderFactory
 

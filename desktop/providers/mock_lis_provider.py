@@ -117,7 +117,7 @@ class MockLisProvider(LisProvider):
             ))
         return results
 
-    # lis/mock_provider.py
+    # providers/mock_lis_provider.py
     def seed_demo_data(self, force: bool = False) -> int:
         """
         Заполнить мок-ЛИС тестовыми данными.

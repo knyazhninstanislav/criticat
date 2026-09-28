@@ -1,6 +1,6 @@
-# lis/factory.py
+# providers/factory.py
 from .base import LisProvider
-from .mock_provider import MockLisProvider
+from .mock_lis_provider import MockLisProvider
 
 
 class LisProviderFactory:

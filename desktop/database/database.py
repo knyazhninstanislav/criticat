@@ -14,7 +14,7 @@ class DatabaseManager:
     - test_settings             (настройки мониторинга тестов)
     - consent_records           (согласия)
 
-    НЕ работает с ЛИС! За чтение из ЛИС отвечает LisProvider (папка lis/).
+    НЕ работает с ЛИС! За чтение из ЛИС отвечает LisProvider (папка providers/).
     """
 
     def __init__(self, db_path: str = "../desktop/db/criticat.db"):

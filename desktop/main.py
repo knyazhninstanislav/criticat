@@ -7,7 +7,7 @@ from ui.main_window import MainWindow
 from desktop.ui.splash_screen import SplashController
 from desktop.ui.themes import ThemeController
 from desktop.database.database import DatabaseManager
-from lis.factory import LisProviderFactory
+from providers.factory import LisProviderFactory
 
 
 def main():
