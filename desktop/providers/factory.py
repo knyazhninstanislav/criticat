@@ -3,7 +3,7 @@ from .base import LisProvider
 from .mock_lis_provider import MockLisProvider
 
 
-class LisProviderFactory:
+class ProviderFactory:
     """Фабрика провайдеров ЛИС."""
 
     @staticmethod
