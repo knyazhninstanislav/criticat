@@ -23,6 +23,10 @@ class LisProviderFactory:
         if provider_type == 'mock':
             return MockLisProvider(**kwargs)
 
+        if provider_type == 'swelab_com':
+            from .swelab_com_provider import SwelabComProvider
+            return SwelabComProvider(**kwargs)
+
         # Когда появятся реальные провайдеры — добавить сюда:
         # elif provider_type == 'sqlite':
         #     from .sqlite_lis_provider import SqliteLisProvider

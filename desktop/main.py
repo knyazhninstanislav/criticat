@@ -29,6 +29,7 @@ def main():
 
     # ===== ПРОВАЙДЕР ЛИС =====
     lis_provider_type = app_settings.value('lis_provider', 'mock')
+    # swelab_provider_type = app_settings.value('swelab_com', 'swelab')
     lis_db_path = app_settings.value('lis_db_path', './db/mock_lis.db')
 
     try:
@@ -36,6 +37,13 @@ def main():
             provider_type=lis_provider_type,
             db_path=lis_db_path
         )
+
+        # lis_provider = LisProviderFactory.create(
+        #     privider_type=swelab_provider_type,
+        #     port='COM3',
+        #     baudrate=19200,
+        #     skip_background=True,
+        # )
     except Exception as e:
         QMessageBox.critical(None, "Ошибка", f"Не удалось создать провайдер ЛИС: {e}")
         splash_controller.close()
