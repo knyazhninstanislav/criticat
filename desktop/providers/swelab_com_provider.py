@@ -3,7 +3,7 @@
 Провайдер ЛИС для анализатора Swelab Alfa (BM800) через COM-порт.
 
 Читает XML-поток с RS-232, парсит <sample> блоки и отдаёт их
-в виде LisResult — совместимо с MockLisProvider.
+в виде BaseResult — совместимо с MockLisProvider.
 """
 
 import re
@@ -15,7 +15,7 @@ from typing import List, Dict, Optional
 
 import serial  # pyserial
 
-from .base import BaseProvider, LisResult
+from .base import BaseProvider, BaseResult
 
 
 # ---------- Константы Swelab ----------
@@ -35,7 +35,7 @@ class SwelabComProvider(BaseProvider):
     Провайдер, читающий результаты с анализатора Swelab Alfa через COM-порт.
 
     Открывает порт, слушает в фоновом потоке, разбирает XML,
-    складывает LisResult в очередь.
+    складывает BaseResult в очередь.
     """
 
     def __init__(
@@ -60,7 +60,7 @@ class SwelabComProvider(BaseProvider):
         self.ser: Optional[serial.Serial] = None
 
         # Очередь готовых результатов
-        self._results_queue: queue.Queue[LisResult] = queue.Queue()
+        self._results_queue: queue.Queue[BaseResult] = queue.Queue()
 
         # Буфер для сборки XML-блоков (может прийти по частям)
         self._buffer = b""
@@ -157,7 +157,7 @@ class SwelabComProvider(BaseProvider):
                 print(f"[Swelab] ❌ Ошибка парсинга sample: {e}")
 
     def _handle_sample(self, raw: bytes) -> None:
-        """Парсит один <sample> и складывает LisResult в очередь."""
+        """Парсит один <sample> и складывает BaseResult в очередь."""
         # Декодируем; Swelab шлёт ASCII/UTF-8
         xml_str = raw.decode("utf-8", errors="replace")
 
@@ -218,7 +218,7 @@ class SwelabComProvider(BaseProvider):
                     "ref_upper": ref_high,
                 }
 
-            result = LisResult(
+            result = BaseResult(
                 id=row_id,
                 ids=ids,
                 full_name=sample_id_raw or "—",
@@ -262,13 +262,13 @@ class SwelabComProvider(BaseProvider):
         self,
         test_names: List[str],
         excluded_ids: List[int],
-    ) -> List[LisResult]:
+    ) -> List[BaseResult]:
         """
         Забирает из очереди всё, что накопилось, фильтрует по:
         - test_names (если список непустой)
         - excluded_ids (исключает уже обработанные id)
         """
-        drained: List[LisResult] = []
+        drained: List[BaseResult] = []
         while True:
             try:
                 drained.append(self._results_queue.get_nowait())
@@ -291,7 +291,7 @@ class SwelabComProvider(BaseProvider):
 
     # ---------- Дополнительно ----------
 
-    def get_results_nowait(self) -> List[LisResult]:
+    def get_results_nowait(self) -> List[BaseResult]:
         """
         Удобный метод: отдать всё из очереди без фильтрации.
         Для GUI, где не нужен протокол 'excluded_ids'.
