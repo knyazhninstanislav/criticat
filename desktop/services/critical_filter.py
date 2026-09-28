@@ -1,15 +1,14 @@
 # services/critical_filter.py
 from typing import List, Dict, Any
 
-from lis.base import LisResult
-
+from desktop.providers.base import BaseResult
 
 class CriticalFilterService:
     """
     Определяет, какие сырые результаты из ЛИС являются критическими.
 
     Логика:
-    - Берёт сырой LisResult
+    - Берёт сырой BaseResult
     - Смотрит настройки теста (monitor_type, ref_lower, ref_upper)
     - Решает: критично или нет
     - Если критично — считает процент отклонения
@@ -17,7 +16,7 @@ class CriticalFilterService:
 
     def filter_critical(
         self,
-        raw_results: List[LisResult],
+        raw_results: List[BaseResult],
         test_settings: Dict[str, Dict]
     ) -> List[Dict[str, Any]]:
         """

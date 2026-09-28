@@ -15,7 +15,7 @@ from typing import List, Dict, Optional
 
 import serial  # pyserial
 
-from .base import LisProvider, LisResult
+from .base import BaseProvider, LisResult
 
 
 # ---------- Константы Swelab ----------
@@ -30,7 +30,7 @@ DEFAULT_STOPBITS = serial.STOPBITS_ONE
 RE_SAMPLE = re.compile(rb"<sample>.*?</sample>", re.DOTALL)
 
 
-class SwelabComProvider(LisProvider):
+class SwelabComProvider(BaseProvider):
     """
     Провайдер, читающий результаты с анализатора Swelab Alfa через COM-порт.
 

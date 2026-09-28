@@ -3,8 +3,8 @@ from PySide6.QtCore import QThread, Signal
 from typing import List
 
 from desktop.database.database import DatabaseManager
-from lis.base import LisProvider
-from services.critical_filter import CriticalFilterService
+from desktop.providers.base import BaseProvider
+from desktop.services.critical_filter import CriticalFilterService
 
 
 class CheckWorker(QThread):
@@ -13,7 +13,7 @@ class CheckWorker(QThread):
 
     def __init__(
         self,
-        lis_provider: LisProvider,
+        lis_provider: BaseProvider,
         db_manager: DatabaseManager,
         test_names: List[str],
         excluded_ids: List[int],

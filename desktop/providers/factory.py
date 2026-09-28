@@ -1,13 +1,13 @@
 # providers/factory.py
-from .base import LisProvider
-from .mock_lis_provider import MockLisProvider
+from .base import BaseProvider
+from .mock_lis_provider import MockBaseProvider
 
 
 class ProviderFactory:
     """Фабрика провайдеров ЛИС."""
 
     @staticmethod
-    def create(provider_type: str, **kwargs) -> LisProvider:
+    def create(provider_type: str, **kwargs) -> BaseProvider:
         """
         Создать провайдер ЛИС по типу.
 
@@ -21,7 +21,7 @@ class ProviderFactory:
         provider_type = (provider_type or 'mock').lower()
 
         if provider_type == 'mock':
-            return MockLisProvider(**kwargs)
+            return MockBaseProvider(**kwargs)
 
         if provider_type == 'swelab_com':
             from .swelab_com_provider import SwelabComProvider

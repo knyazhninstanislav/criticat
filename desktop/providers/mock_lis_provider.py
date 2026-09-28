@@ -1,10 +1,10 @@
 import sqlite3
 import os
 from typing import List, Dict, Any
-from .base import LisProvider, LisResult
+from .base import BaseProvider, BaseResult
 
 
-class MockLisProvider(LisProvider):
+class MockBaseProvider(BaseProvider):
     """
     Мок-провайдер ЛИС.
 
@@ -81,7 +81,7 @@ class MockLisProvider(LisProvider):
         self,
         test_names: List[str],
         excluded_ids: List[int]
-    ) -> List[LisResult]:
+    ) -> List[BaseResult]:
         if not self.connection or not test_names:
             return []
 
@@ -105,7 +105,7 @@ class MockLisProvider(LisProvider):
 
         results = []
         for row in cursor.fetchall():
-            results.append(LisResult(
+            results.append(BaseResult(
                 id=row['id'],
                 ids=row['ids'],
                 full_name=row['full_name'],

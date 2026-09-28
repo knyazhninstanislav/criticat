@@ -14,7 +14,7 @@ from database.worker import CheckWorker
 from database.database import DatabaseManager
 from database.models import Settings
 from services.server_client import ServerClient
-from lis.base import LisProvider
+from desktop.providers import BaseProvider
 
 
 class MainWindow(QMainWindow):

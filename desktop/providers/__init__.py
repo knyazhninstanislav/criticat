@@ -1,5 +1,5 @@
 # providers/__init__.py
-from .base import LisProvider, LisResult
-from .factory import ProviderFactory
+from desktop.providers.base import BaseProvider, BaseResult
+from desktop.providers.factory import ProviderFactory
 
-__all__ = ['LisProvider', 'LisResult', 'ProviderFactory']
+__all__ = ['BaseProvider', 'BaseResult', 'ProviderFactory']

@@ -5,8 +5,8 @@ from typing import List, Dict, Optional
 
 
 @dataclass
-class LisResult:
-    """Сырой результат из ЛИС — универсальная структура"""
+class BaseResult:
+    """Сырой результат - универсальная структура"""
     id: int
     ids: int                    # ID пациента
     full_name: str
@@ -17,7 +17,7 @@ class LisResult:
     ref_upper: Optional[float]
 
 
-class LisProvider(ABC):
+class BaseProvider(ABC):
     """
     Абстрактный провайдер ЛИС.
 
@@ -56,7 +56,7 @@ class LisProvider(ABC):
         self,
         test_names: List[str],
         excluded_ids: List[int]
-    ) -> List[LisResult]:
+    ) -> List[BaseResult]:
         """
         Получить сырые результаты по указанным тестам.
         Исключить excluded_ids.
